@@ -25,3 +25,10 @@ Icon
 Network Trash Folder
 Temporary Items
 .apdisk
+
+# Node
+node_modules/
+.next/
+
+# Build output
+dist/
