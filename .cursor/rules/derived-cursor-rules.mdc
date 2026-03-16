@@ -1,0 +1,60 @@
+---
+description: AI rules derived by SpecStory from the project AI interaction history
+applyTo: *
+---
+
+## PROJECT OVERVIEW
+
+This file defines all project rules, coding standards, workflow guidelines, references, documentation structures, and best practices for the AI coding assistant. It is a living document and evolves as the project progresses and new requirements emerge.
+
+## CODE STYLE
+
+(No current content)
+
+## FOLDER ORGANIZATION
+
+(No current content)
+
+## TECH STACK
+
+(No current content)
+
+## PROJECT-SPECIFIC STANDARDS
+
+(No current content)
+
+## WORKFLOW & RELEASE RULES
+
+(No current content)
+
+## REFERENCE EXAMPLES
+
+(No current content)
+
+## PROJECT DOCUMENTATION & CONTEXT SYSTEM
+
+(No current content)
+
+## DEBUGGING
+
+(No current content)
+
+## FINAL DOs AND DON'Ts
+
+*   Default to showing code blocks when an element is selected.
+*   Default to CSS Selector as the output format.
+*   When generating CSS selectors, avoid selectors with `#radix-`.
+*   When generating CSS selectors, prefer selectors that start with `xx--` or `oo--`.
+*   Use regular expressions for matching CSS selectors.
+*   Walk the DOM tree to improve the generated CSS selectors.
+*   When generating CSS selectors:
+    *   Prefer `id`: if present, use `#id` and stop (shortest path).
+    *   Prefer classes: up to 2 classes per node.
+    *   Use `:nth-of-type` only when needed (multiple same-tag siblings).
+    *   Ignore classes starting with `elpicker-`.
+*   When generating CSS selectors, do not explicitly handle dynamic classes, data attributes, or `role`.
+*   When generating CSS selectors, the following are not implemented:
+    *   Uniqueness checks (e.g. `querySelector` to verify one match).
+    *   Preference for `data-*` or `role` over classes.
+    *   Avoidance of `:nth-of-type` when other attributes suffice.
+    *   Shortest-path optimization (e.g. stopping when selector is unique).

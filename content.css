@@ -1,0 +1,343 @@
+/* ElPicker Styles */
+.elpicker-highlight {
+  outline: 2px dashed #3b82f6 !important;
+  outline-offset: 2px !important;
+  background-color: rgba(59, 130, 246, 0.1) !important;
+  transition: outline 0.1s ease, background-color 0.1s ease;
+}
+
+.elpicker-selected {
+  outline: 3px solid #10b981 !important;
+  outline-offset: 2px !important;
+  background-color: rgba(16, 185, 129, 0.15) !important;
+}
+
+.elpicker-rect {
+  position: fixed;
+  border: 2px dashed #3b82f6;
+  background-color: rgba(59, 130, 246, 0.1);
+  pointer-events: none;
+  z-index: 2147483646;
+}
+
+.elpicker-overlay {
+  position: fixed;
+  z-index: 2147483647;
+  background: #1e1e2e;
+  border: 1px solid #45475a;
+  border-radius: 8px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+  color: #cdd6f4;
+  max-width: 420px;
+  max-height: 60vh;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.elpicker-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  background: #313244;
+  border-bottom: 1px solid #45475a;
+  border-radius: 8px 8px 0 0;
+}
+
+.elpicker-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #cdd6f4;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.elpicker-title-icon {
+  width: 16px;
+  height: 16px;
+  fill: #89b4fa;
+}
+
+.elpicker-breadcrumb {
+  font-size: 11px;
+  color: #a6adc8;
+  padding: 6px 14px;
+  background: #292939;
+  border-bottom: 1px solid #45475a;
+  font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace;
+  white-space: nowrap;
+  overflow-x: auto;
+}
+
+.elpicker-nav-hint {
+  font-size: 10px;
+  color: #6c7086;
+  padding: 4px 14px;
+  background: #1e1e2e;
+  border-bottom: 1px solid #45475a;
+}
+
+.elpicker-nav-hint kbd {
+  display: inline-block;
+  background: #313244;
+  border: 1px solid #45475a;
+  border-radius: 3px;
+  padding: 1px 5px;
+  font-size: 9px;
+  font-family: inherit;
+  margin: 0 2px;
+}
+
+.elpicker-preview {
+  padding: 12px 14px;
+  overflow: auto;
+  flex: 1;
+  min-height: 60px;
+  max-height: 200px;
+  background: #181825;
+}
+
+.elpicker-preview-element {
+  border: 1px solid #45475a;
+  border-radius: 4px;
+  padding: 8px;
+  background: #1e1e2e;
+  margin-bottom: 8px;
+}
+
+.elpicker-preview-label {
+  font-size: 10px;
+  color: #6c7086;
+  margin-bottom: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.elpicker-preview-tag {
+  font-size: 12px;
+  font-weight: 600;
+  color: #f38ba8;
+  font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace;
+}
+
+.elpicker-preview-classes {
+  font-size: 11px;
+  color: #a6e3a1;
+  font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace;
+  word-break: break-all;
+  margin-top: 4px;
+}
+
+.elpicker-preview-id {
+  font-size: 11px;
+  color: #f9e2af;
+  font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace;
+  margin-top: 4px;
+}
+
+.elpicker-code-section {
+  padding: 10px 14px;
+  border-top: 1px solid #45475a;
+  background: #11111b;
+}
+
+.elpicker-code-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10px;
+  color: #6c7086;
+  cursor: pointer;
+  user-select: none;
+}
+
+.elpicker-code-toggle:hover {
+  color: #a6adc8;
+}
+
+.elpicker-code {
+  font-size: 9px;
+  font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace;
+  color: #bac2de;
+  background: #181825;
+  border: 1px solid #313244;
+  border-radius: 4px;
+  padding: 8px;
+  margin-top: 8px;
+  max-height: 100px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+  line-height: 1.4;
+}
+
+.elpicker-actions {
+  display: flex;
+  gap: 8px;
+  padding: 10px 14px;
+  background: #313244;
+  border-top: 1px solid #45475a;
+  border-radius: 0 0 8px 8px;
+}
+
+.elpicker-btn {
+  flex: 1;
+  padding: 6px 12px;
+  font-size: 11px;
+  font-weight: 500;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  font-family: inherit;
+}
+
+.elpicker-btn-primary {
+  background: #89b4fa;
+  color: #1e1e2e;
+}
+
+.elpicker-btn-primary:hover {
+  background: #b4befe;
+}
+
+.elpicker-btn-secondary {
+  background: #45475a;
+  color: #cdd6f4;
+}
+
+.elpicker-btn-secondary:hover {
+  background: #585b70;
+}
+
+.elpicker-btn-ghost {
+  background: transparent;
+  color: #a6adc8;
+  border: 1px solid #45475a;
+}
+
+.elpicker-btn-ghost:hover {
+  background: #45475a;
+}
+
+.elpicker-format-select {
+  background: #313244;
+  color: #cdd6f4;
+  border: 1px solid #45475a;
+  border-radius: 4px;
+  padding: 4px 8px;
+  font-size: 11px;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.elpicker-format-select:focus {
+  outline: none;
+  border-color: #89b4fa;
+}
+
+.elpicker-close {
+  background: none;
+  border: none;
+  color: #6c7086;
+  cursor: pointer;
+  padding: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  transition: all 0.15s ease;
+}
+
+.elpicker-close:hover {
+  background: #45475a;
+  color: #cdd6f4;
+}
+
+.elpicker-copied-toast {
+  position: fixed;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: #10b981;
+  color: white;
+  padding: 8px 16px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  z-index: 2147483647;
+  animation: elpicker-toast-in 0.2s ease;
+}
+
+@keyframes elpicker-toast-in {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+}
+
+/* Cursor styles */
+.elpicker-active {
+  cursor: crosshair !important;
+}
+
+.elpicker-active * {
+  cursor: crosshair !important;
+}
+
+/* Semantic class suggestions */
+.elpicker-suggest-panel {
+  padding: 10px 14px;
+  border-top: 1px solid #45475a;
+  background: #1e1e2e;
+}
+
+.elpicker-suggest-title {
+  font-size: 10px;
+  color: #6c7086;
+  margin-bottom: 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.elpicker-suggest-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.elpicker-suggest-chip {
+  font-size: 10px;
+  padding: 3px 8px;
+  border-radius: 3px;
+  font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.elpicker-suggest-chip-xx {
+  background: rgba(243, 139, 168, 0.2);
+  color: #f38ba8;
+  border: 1px solid rgba(243, 139, 168, 0.3);
+}
+
+.elpicker-suggest-chip-xx:hover {
+  background: rgba(243, 139, 168, 0.3);
+}
+
+.elpicker-suggest-chip-oo {
+  background: rgba(166, 227, 161, 0.2);
+  color: #a6e3a1;
+  border: 1px solid rgba(166, 227, 161, 0.3);
+}
+
+.elpicker-suggest-chip-oo:hover {
+  background: rgba(166, 227, 161, 0.3);
+}
