@@ -7,7 +7,7 @@
     "dev": "next dev",
     "lint": "eslint .",
     "start": "next start",
-    "build:extension": "bash build-extension.sh"
+    "build:extension": "next build && bash build-extension.sh"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",
