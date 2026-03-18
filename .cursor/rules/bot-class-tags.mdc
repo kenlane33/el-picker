@@ -1,0 +1,10 @@
+---
+alwaysApply: true
+applyTo: *.tsx
+---
+**Naming markers.** Not too many, but a balanced count of interactive/structural HTML element carries semantic class markers for automated scraping:
+
+| Prefix | Purpose | Example |
+|---|---|---|
+| `oo--<name>` | Specific / unique | `oo--site-sidebar`, `oo--home-hero`, `oo--map-legend` |
+| `xx--<name>` | Functional / structural interactive / repeats | `xx--button`, `xx--select`, `xx--input`, `xx--hero` |
