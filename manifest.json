@@ -15,8 +15,8 @@
   "commands": {
     "activate-picker": {
       "suggested_key": {
-        "default": "Alt+P",
-        "mac": "Alt+P"
+        "default": "Ctrl+Shift+E",
+        "mac": "MacCtrl+Shift+E"
       },
       "description": "Activate ElPicker"
     }
@@ -24,6 +24,12 @@
   "background": {
     "service_worker": "background.js"
   },
+  "web_accessible_resources": [
+    {
+      "resources": ["icons/*.png"],
+      "matches": ["<all_urls>"]
+    }
+  ],
   "content_scripts": [
     {
       "matches": ["<all_urls>"],

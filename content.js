@@ -22,7 +22,7 @@
     hoveredElement: null,
     childIndex: 0,
     showCode: true,
-    outputFormat: 'selector' // 'xpath', 'outerhtml', 'innerhtml', 'selector'
+    outputFormat: 'shortSelector' // 'shortSelector', 'shortXpath', 'selector', 'xpath', 'outerhtml', 'innerhtml'
   };
 
   // DOM references
@@ -30,6 +30,11 @@
   let overlayEl = null;
 
   // ===== Utility Functions =====
+
+  function qs(parent, sel) { return parent.querySelector(sel); }
+  function qsa(parent, sel) { return parent.querySelectorAll(sel); }
+  function elClick(parent, sel, fn) { qs(parent, sel).addEventListener('click', fn); }
+  function elOn(parent, sel, evt, fn) { qs(parent, sel).addEventListener(evt, fn); }
 
   function getXPath(element) {
     if (!element) return '';
@@ -52,22 +57,88 @@
     return '';
   }
 
-  // Selector preference configuration
-  const selectorConfig = {
-    // IDs to avoid (regex patterns)
-    avoidIdPatterns: [
-      /^radix-/  // Radix UI auto-generated IDs
-    ],
-    // Classes to prefer (regex patterns) - checked first, in order
-    preferClassPatterns: [
-      /^xx--/,   // Functional classes
-      /^oo--/    // Semantic classes
-    ],
-    // Classes to avoid (regex patterns)
-    avoidClassPatterns: [
-      /^elpicker-/  // Our own classes
-    ]
+  // Selector preference configuration (mutable, loaded from storage)
+  let selectorConfig = {
+    avoidIdPatterns: [/^radix-/],
+    preferClassPatterns: [/^xx--/, /^oo--/],
+    avoidClassPatterns: [/^elpicker-/]
   };
+
+  // Load config from storage
+  async function loadSelectorConfig() {
+    try {
+      const result = await chrome.storage.sync.get('selectorConfig');
+      if (result.selectorConfig) {
+        applySelectorConfig(result.selectorConfig);
+      }
+    } catch (e) {
+      console.log('ElPicker: Could not load config', e);
+    }
+  }
+
+  function applySelectorConfig(config) {
+    selectorConfig = {
+      avoidIdPatterns: (config.avoidedIdPatterns || []).map(p => new RegExp(p)),
+      preferClassPatterns: (config.preferredPatterns || []).map(p => new RegExp(p)),
+      avoidClassPatterns: [/^elpicker-/, ...(config.avoidedPatterns || []).map(p => new RegExp(p))]
+    };
+  }
+
+  // Editor configuration (loaded from storage)
+  let editorConfig = { editor: 'cursor', projectRoot: '' };
+
+  async function loadEditorConfig() {
+    try {
+      const result = await chrome.storage.sync.get('editorConfig');
+      if (result.editorConfig) {
+        editorConfig = { ...editorConfig, ...result.editorConfig };
+      }
+    } catch (e) {
+      console.log('ElPicker: Could not load editor config', e);
+    }
+  }
+
+  // Behavior configuration (loaded from storage)
+  let behaviorConfig = { stayOpen: false };
+
+  async function loadBehaviorConfig() {
+    try {
+      const result = await chrome.storage.sync.get('behaviorConfig');
+      if (result.behaviorConfig) {
+        behaviorConfig = { ...behaviorConfig, ...result.behaviorConfig };
+      }
+    } catch (e) {
+      console.log('ElPicker: Could not load behavior config', e);
+    }
+  }
+
+  function closeAfterAction() {
+    if (!behaviorConfig.stayOpen) {
+      deactivate();
+    }
+  }
+
+  async function loadFormatPreference() {
+    try {
+      const result = await chrome.storage.sync.get('formatPreference');
+      if (result.formatPreference && FORMAT_ORDER.includes(result.formatPreference)) {
+        state.outputFormat = result.formatPreference;
+      }
+    } catch (e) {
+      console.log('ElPicker: Could not load format preference', e);
+    }
+  }
+
+  function saveFormatPreference(format) {
+    try { chrome.storage.sync.set({ formatPreference: format }); }
+    catch (e) { /* ignore */ }
+  }
+
+  // Load config on script initialization
+  loadSelectorConfig();
+  loadEditorConfig();
+  loadBehaviorConfig();
+  loadFormatPreference();
 
   function isIdAllowed(id) {
     if (!id) return false;
@@ -141,6 +212,230 @@
     return parts.join(' > ');
   }
 
+  // ===== Short Selector Helpers =====
+
+  function classScore(cls) {
+    if (selectorConfig.avoidClassPatterns.some(p => p.test(cls))) return -1;
+    if (selectorConfig.preferClassPatterns.some(p => p.test(cls))) return 100;
+    if (/^[A-Z]/.test(cls)) return 40;
+    if (/__/.test(cls)) return 30;
+    if (/^[a-z]+--.+/.test(cls)) return 25;
+    if (/^(js-|qa-|test-|e2e-|hook-)/.test(cls)) return 20;
+    return 0;
+  }
+
+  function getMeaningfulClasses(el) {
+    if (!el.className || typeof el.className !== 'string') return [];
+    const raw = el.className.trim().split(/\s+/).filter(Boolean);
+    const scored = [];
+    for (const cls of raw) {
+      const s = classScore(cls);
+      if (s > 0) scored.push({ cls, score: s });
+    }
+    scored.sort((a, b) => b.score - a.score);
+    return scored.map(s => s.cls);
+  }
+
+  function isSelectorUnique(selector, expected) {
+    try {
+      const matches = document.querySelectorAll(selector);
+      return matches.length === 1 && matches[0] === expected;
+    } catch { return false; }
+  }
+
+  function isXPathUnique(xpath, expected) {
+    try {
+      const result = document.evaluate(
+        xpath, document, null, XPathResult.ORDERED_NODE_SNAPSHOT_TYPE, null
+      );
+      return result.snapshotLength === 1 && result.snapshotItem(0) === expected;
+    } catch { return false; }
+  }
+
+  function getShortCssSelector(element) {
+    if (!element || element === document.body || element === document.documentElement) return '';
+
+    if (element.id && isIdAllowed(element.id)) {
+      return '#' + CSS.escape(element.id);
+    }
+
+    const tag = element.tagName.toLowerCase();
+
+    for (const attr of ['data-testid', 'data-cy']) {
+      const val = element.getAttribute(attr);
+      if (val) {
+        const sel = tag + '[' + attr + '="' + CSS.escape(val) + '"]';
+        if (isSelectorUnique(sel, element)) return sel;
+      }
+    }
+
+    const ariaLabel = element.getAttribute('aria-label');
+    if (ariaLabel && ariaLabel.length < 50) {
+      const sel = tag + '[aria-label="' + CSS.escape(ariaLabel) + '"]';
+      if (isSelectorUnique(sel, element)) return sel;
+    }
+
+    const selfClasses = getMeaningfulClasses(element);
+
+    for (const cls of selfClasses.slice(0, 3)) {
+      const dotCls = '.' + CSS.escape(cls);
+      if (isSelectorUnique(dotCls, element)) return dotCls;
+      if (isSelectorUnique(tag + dotCls, element)) return tag + dotCls;
+    }
+
+    if (selfClasses.length >= 2) {
+      const sel = tag + '.' + CSS.escape(selfClasses[0]) + '.' + CSS.escape(selfClasses[1]);
+      if (isSelectorUnique(sel, element)) return sel;
+    }
+
+    const selfBest = selfClasses.length > 0
+      ? tag + '.' + CSS.escape(selfClasses[0])
+      : tag;
+
+    let ancestor = element.parentElement;
+    let depth = 0;
+    while (ancestor && ancestor !== document.body && ancestor !== document.documentElement && depth < 8) {
+      if (ancestor.id && isIdAllowed(ancestor.id)) {
+        const anchor = '#' + CSS.escape(ancestor.id);
+        if (isSelectorUnique(anchor + ' ' + selfBest, element)) return anchor + ' ' + selfBest;
+      }
+      const ancestorClasses = getMeaningfulClasses(ancestor);
+      const aTag = ancestor.tagName.toLowerCase();
+      for (const cls of ancestorClasses.slice(0, 2)) {
+        const anchor = aTag + '.' + CSS.escape(cls);
+        if (isSelectorUnique(anchor + ' ' + selfBest, element)) return anchor + ' ' + selfBest;
+      }
+      ancestor = ancestor.parentElement;
+      depth++;
+    }
+
+    const parent = element.parentElement;
+    if (parent) {
+      const siblings = Array.from(parent.children).filter(c => c.tagName === element.tagName);
+      if (siblings.length > 1) {
+        const idx = siblings.indexOf(element) + 1;
+        const nthSelf = selfBest + ':nth-of-type(' + idx + ')';
+        const parentClasses = getMeaningfulClasses(parent);
+        if (parentClasses.length > 0) {
+          const sel = parent.tagName.toLowerCase() + '.' + CSS.escape(parentClasses[0]) + ' > ' + nthSelf;
+          if (isSelectorUnique(sel, element)) return sel;
+        }
+        let anc = parent.parentElement;
+        let d = 0;
+        while (anc && anc !== document.body && d < 5) {
+          if (anc.id && isIdAllowed(anc.id)) {
+            const sel = '#' + CSS.escape(anc.id) + ' ' + nthSelf;
+            if (isSelectorUnique(sel, element)) return sel;
+          }
+          const ancClasses = getMeaningfulClasses(anc);
+          if (ancClasses.length > 0) {
+            const sel = anc.tagName.toLowerCase() + '.' + CSS.escape(ancClasses[0]) + ' ' + nthSelf;
+            if (isSelectorUnique(sel, element)) return sel;
+          }
+          anc = anc.parentElement;
+          d++;
+        }
+      }
+    }
+
+    return getCssSelector(element);
+  }
+
+  function getShortXPath(element) {
+    if (!element || element === document.body) return '';
+
+    if (element.id && isIdAllowed(element.id)) {
+      return '//*[@id="' + element.id + '"]';
+    }
+
+    const tag = element.tagName.toLowerCase();
+
+    for (const attr of ['data-testid', 'data-cy']) {
+      const val = element.getAttribute(attr);
+      if (val) {
+        const xp = '//' + tag + '[@' + attr + '="' + val + '"]';
+        if (isXPathUnique(xp, element)) return xp;
+      }
+    }
+
+    const selfClasses = getMeaningfulClasses(element);
+    for (const cls of selfClasses.slice(0, 3)) {
+      const xp = '//' + tag + '[contains(@class, "' + cls + '")]';
+      if (isXPathUnique(xp, element)) return xp;
+    }
+
+    if (['button', 'a', 'label', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6'].includes(tag)) {
+      const text = (element.textContent || '').trim();
+      if (text && text.length < 40 && !text.includes('\n') && !text.includes('"')) {
+        const xp = '//' + tag + '[normalize-space()="' + text + '"]';
+        if (isXPathUnique(xp, element)) return xp;
+      }
+    }
+
+    const ariaLabel = element.getAttribute('aria-label');
+    if (ariaLabel && !ariaLabel.includes('"')) {
+      const xp = '//' + tag + '[@aria-label="' + ariaLabel + '"]';
+      if (isXPathUnique(xp, element)) return xp;
+    }
+
+    if (selfClasses.length >= 2) {
+      const xp = '//' + tag + '[contains(@class, "' + selfClasses[0] + '") and contains(@class, "' + selfClasses[1] + '")]';
+      if (isXPathUnique(xp, element)) return xp;
+    }
+
+    const selfXp = selfClasses.length > 0
+      ? tag + '[contains(@class, "' + selfClasses[0] + '")]'
+      : tag;
+
+    let ancestor = element.parentElement;
+    let depth = 0;
+    while (ancestor && ancestor !== document.body && ancestor !== document.documentElement && depth < 8) {
+      if (ancestor.id && isIdAllowed(ancestor.id)) {
+        const xp = '//*[@id="' + ancestor.id + '"]//' + selfXp;
+        if (isXPathUnique(xp, element)) return xp;
+      }
+      const ancestorClasses = getMeaningfulClasses(ancestor);
+      const aTag = ancestor.tagName.toLowerCase();
+      for (const cls of ancestorClasses.slice(0, 2)) {
+        const xp = '//' + aTag + '[contains(@class, "' + cls + '")]//' + selfXp;
+        if (isXPathUnique(xp, element)) return xp;
+      }
+      ancestor = ancestor.parentElement;
+      depth++;
+    }
+
+    const parent = element.parentElement;
+    if (parent) {
+      const siblings = Array.from(parent.children).filter(c => c.tagName === element.tagName);
+      if (siblings.length > 1) {
+        const idx = siblings.indexOf(element) + 1;
+        const nthSelf = selfXp + '[' + idx + ']';
+        const parentClasses = getMeaningfulClasses(parent);
+        if (parentClasses.length > 0) {
+          const xp = '//' + parent.tagName.toLowerCase() + '[contains(@class, "' + parentClasses[0] + '")]/' + nthSelf;
+          if (isXPathUnique(xp, element)) return xp;
+        }
+        let anc = parent.parentElement;
+        let d = 0;
+        while (anc && anc !== document.body && d < 5) {
+          if (anc.id && isIdAllowed(anc.id)) {
+            const xp = '//*[@id="' + anc.id + '"]//' + nthSelf;
+            if (isXPathUnique(xp, element)) return xp;
+          }
+          const ancClasses = getMeaningfulClasses(anc);
+          if (ancClasses.length > 0) {
+            const xp = '//' + anc.tagName.toLowerCase() + '[contains(@class, "' + ancClasses[0] + '")]//' + nthSelf;
+            if (isXPathUnique(xp, element)) return xp;
+          }
+          anc = anc.parentElement;
+          d++;
+        }
+      }
+    }
+
+    return getXPath(element);
+  }
+
   function getBreadcrumb(element) {
     const parts = [];
     let el = element;
@@ -174,16 +469,20 @@
 
   function getElementContext(element) {
     switch (state.outputFormat) {
+      case 'shortSelector':
+        return getShortCssSelector(element);
+      case 'shortXpath':
+        return getShortXPath(element);
+      case 'selector':
+        return getCssSelector(element);
       case 'xpath':
         return getXPath(element);
       case 'outerhtml':
         return element.outerHTML;
       case 'innerhtml':
         return element.innerHTML;
-      case 'selector':
-        return getCssSelector(element);
       default:
-        return getXPath(element);
+        return getShortCssSelector(element);
     }
   }
 
@@ -230,7 +529,7 @@
     if (children > 3 && (tag === 'div' || tag === 'section')) {
       suggestions.xx.push('container');
     }
-    if (element.querySelector('img') && element.querySelector('h1, h2, h3, h4, h5, h6, p')) {
+    if (qs(element, 'img') && qs(element, 'h1, h2, h3, h4, h5, h6, p')) {
       suggestions.xx.push('card');
     }
     
@@ -274,6 +573,83 @@
     suggestions.oo = [...new Set(suggestions.oo)].slice(0, 3);
     
     return suggestions;
+  }
+
+  // ===== Source-to-Editor =====
+
+  const FORMAT_ORDER = ['shortSelector', 'shortXpath', 'selector', 'xpath', 'outerhtml', 'innerhtml'];
+
+  const FORMAT_LABELS = {
+    shortSelector: 'Short CSS',
+    shortXpath: 'Short XPath',
+    selector: 'Full CSS',
+    xpath: 'Full XPath',
+    outerhtml: 'Outer HTML',
+    innerhtml: 'Inner HTML'
+  };
+
+  function findDataSource(element) {
+    const match = element.closest('[data-source]');
+    return match ? match.dataset.source : null;
+  }
+
+  function parseDataSource(raw) {
+    if (!raw) return null;
+    const lastColon = raw.lastIndexOf(':');
+    if (lastColon <= 0) return null;
+    return { file: raw.substring(0, lastColon), line: raw.substring(lastColon + 1) };
+  }
+
+  function formatSourceDisplay(raw) {
+    const parsed = parseDataSource(raw);
+    if (!parsed) return raw;
+    const short = parsed.file.replace(/^.*?\/src\//, 'src/');
+    return `${short}:${parsed.line}`;
+  }
+
+  function openInEditor() {
+    if (!state.selectedElement) return;
+    const raw = findDataSource(state.selectedElement);
+    if (!raw) {
+      showToast('No data-source found on this element or ancestors');
+      return;
+    }
+    const parsed = parseDataSource(raw);
+    if (!parsed) return;
+
+    let filePath = parsed.file;
+    if (!filePath.startsWith('/') && editorConfig.projectRoot) {
+      filePath = editorConfig.projectRoot.replace(/\/$/, '') + '/' + filePath;
+    }
+
+    let url;
+    if (editorConfig.editor === 'custom' && editorConfig.customTemplate) {
+      url = editorConfig.customTemplate
+        .replace(/\{file\}/g, filePath)
+        .replace(/\{line\}/g, parsed.line);
+    } else {
+      const protocol = editorConfig.editor === 'vscode' ? 'vscode' : 'cursor';
+      url = `${protocol}://file/${filePath}:${parsed.line}`;
+    }
+
+    window.location.href = url;
+    const label = editorConfig.editor === 'custom' ? 'editor'
+      : editorConfig.editor === 'vscode' ? 'VS Code' : 'Cursor';
+    showToast(`Opening in ${label}...`);
+    closeAfterAction();
+  }
+
+  function cycleFormat(direction) {
+    const idx = FORMAT_ORDER.indexOf(state.outputFormat);
+    const next = (idx + direction + FORMAT_ORDER.length) % FORMAT_ORDER.length;
+    state.outputFormat = FORMAT_ORDER[next];
+    saveFormatPreference(state.outputFormat);
+    if (overlayEl) {
+      const select = qs(overlayEl, '#elpicker-format');
+      if (select) select.value = state.outputFormat;
+      updateCodePreview();
+    }
+    showToast(`Format: ${FORMAT_LABELS[state.outputFormat] || state.outputFormat}`);
   }
 
   function getOptimalOverlayPosition(element) {
@@ -342,32 +718,79 @@
     }
   }
 
+  function getNavInfo(element) {
+    const elFilter = el => !el.classList.contains('elpicker-overlay') && !el.classList.contains('elpicker-rect');
+    const parent = element.parentElement;
+    const hasParent = parent && parent !== document.body && parent !== document.documentElement;
+    const childCount = Array.from(element.children).filter(elFilter).length;
+    let prevCount = 0, nextCount = 0;
+    if (parent) {
+      const siblings = Array.from(parent.children).filter(elFilter);
+      const idx = siblings.indexOf(element);
+      prevCount = Math.max(0, idx);
+      nextCount = Math.max(0, siblings.length - 1 - idx);
+    }
+    return { hasParent, childCount, prevCount, nextCount };
+  }
+
+  function buildNavCompass(nav, scale) {
+    const s = scale;
+    const dot = (count, cls) => {
+      const max = 5;
+      const n = Math.min(count, max);
+      let dots = '';
+      for (let i = 0; i < n; i++) dots += `<span class="elpicker-nav-dot"></span>`;
+      if (count > max) dots += `<span class="elpicker-nav-dot elpicker-nav-dot-plus"></span>`;
+      return `<span class="elpicker-nav-dots ${cls}">${dots}</span>`;
+    };
+    const upCls = nav.hasParent ? 'elpicker-nav-active' : 'elpicker-nav-dim';
+    const downCls = nav.childCount > 0 ? 'elpicker-nav-active' : 'elpicker-nav-dim';
+    const leftCls = nav.prevCount > 0 ? 'elpicker-nav-active' : 'elpicker-nav-dim';
+    const rightCls = nav.nextCount > 0 ? 'elpicker-nav-active' : 'elpicker-nav-dim';
+    return `<div class="elpicker-nav-compass" style="transform:scale(${s})">` +
+      `<div class="elpicker-nav-row">`+
+        `<span class="elpicker-nav-arrow ${upCls}" data-nav="up">^</span>`+
+      `</div>`+
+      `<div class="elpicker-nav-row">`+
+        `<span class="elpicker-nav-arrow ${leftCls}" data-nav="left">&lt;</span>`+
+        `<span class="elpicker-nav-arrow ${downCls}" data-nav="down">v</span>`+
+        `<span class="elpicker-nav-arrow ${rightCls}" data-nav="right">&gt;</span>`+
+      `</div>`+
+      `<div class="elpicker-nav-row elpicker-nav-dots-row">`+
+        `${dot(nav.prevCount, 'elpicker-nav-dots-left')}`+
+        `${dot(nav.childCount, 'elpicker-nav-dots-center')}`+
+        `${dot(nav.nextCount, 'elpicker-nav-dots-right')}`+
+      `</div>`+
+    `</div>`;
+  }
+
   function createOverlay(element) {
     removeOverlay();
-    
+
     const suggestions = suggestSemanticClasses(element);
     const pos = getOptimalOverlayPosition(element);
-    
+
     overlayEl = document.createElement('div');
     overlayEl.className = 'elpicker-overlay';
     overlayEl.style.left = `${pos.left}px`;
     overlayEl.style.top = `${pos.top}px`;
-    
+
     const tagName = element.tagName.toLowerCase();
     const id = element.id && isIdAllowed(element.id) ? `#${element.id}` : '';
     const rawClasses = element.className && typeof element.className === 'string'
       ? element.className.split(/\s+/).filter(Boolean)
       : [];
     const classes = sortClassesByPreference(rawClasses).join(' ');
-    
+
+    const nav = getNavInfo(element);
+
     overlayEl.innerHTML = `
       <div class="elpicker-header">
         <div class="elpicker-title">
-          <svg class="elpicker-title-icon" viewBox="0 0 24 24" fill="currentColor">
-            <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/>
-          </svg>
+          <img class="elpicker-title-icon" src="${chrome.runtime.getURL('icons/icon128.png')}" alt="ElPicker" width="18" height="18">
           ElPicker
         </div>
+        ${buildNavCompass(nav, 1)}
         <button class="elpicker-close" title="Close (Esc)">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M18 6L6 18M6 6l12 12"/>
@@ -412,14 +835,31 @@
         </div>
       </div>
       
+      ${(() => {
+        const src = findDataSource(element);
+        return src ? `
+          <div class="elpicker-source-panel">
+            <div class="elpicker-source-label">Source</div>
+            <div class="elpicker-source-file">${escapeHtml(formatSourceDisplay(src))}</div>
+          </div>
+        ` : '';
+      })()}
+
       <div class="elpicker-actions">
         <select class="elpicker-format-select" id="elpicker-format">
-          <option value="xpath" ${state.outputFormat === 'xpath' ? 'selected' : ''}>XPath</option>
-          <option value="selector" ${state.outputFormat === 'selector' ? 'selected' : ''}>CSS Selector</option>
-          <option value="outerhtml" ${state.outputFormat === 'outerhtml' ? 'selected' : ''}>Outer HTML</option>
-          <option value="innerhtml" ${state.outputFormat === 'innerhtml' ? 'selected' : ''}>Inner HTML</option>
+          ${FORMAT_ORDER.map(f =>
+            `<option value="${f}" ${state.outputFormat === f ? 'selected' : ''}>${FORMAT_LABELS[f]}</option>`
+          ).join('')}
         </select>
         <button class="elpicker-btn elpicker-btn-primary" id="elpicker-copy">Copy</button>
+        <button class="elpicker-btn elpicker-btn-open ${findDataSource(element) ? '' : 'elpicker-btn-disabled'}" id="elpicker-open" title="Open in editor (Enter)">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
+            <polyline points="15 3 21 3 21 9"/>
+            <line x1="10" y1="14" x2="21" y2="3"/>
+          </svg>
+          Open
+        </button>
         <button class="elpicker-btn elpicker-btn-ghost" id="elpicker-reselect">Reselect</button>
       </div>
     `;
@@ -427,21 +867,33 @@
     document.body.appendChild(overlayEl);
     
     // Event handlers
-    overlayEl.querySelector('.elpicker-close').addEventListener('click', deactivate);
-    overlayEl.querySelector('#elpicker-copy').addEventListener('click', copyContext);
-    overlayEl.querySelector('#elpicker-reselect').addEventListener('click', startReselect);
-    overlayEl.querySelector('#elpicker-format').addEventListener('change', (e) => {
+    elClick(overlayEl, '.elpicker-close', deactivate);
+    elClick(overlayEl, '#elpicker-copy', copyContext);
+    elClick(overlayEl, '#elpicker-open', openInEditor);
+    elClick(overlayEl, '#elpicker-reselect', startReselect);
+    elOn(overlayEl, '#elpicker-format', 'change', (e) => {
       state.outputFormat = e.target.value;
+      saveFormatPreference(state.outputFormat);
       updateCodePreview();
     });
-    overlayEl.querySelector('#elpicker-show-code').addEventListener('change', (e) => {
+    elOn(overlayEl, '#elpicker-show-code', 'change', (e) => {
       state.showCode = e.target.checked;
-      const codeEl = overlayEl.querySelector('.elpicker-code');
+      const codeEl = qs(overlayEl, '.elpicker-code');
       codeEl.style.display = state.showCode ? 'block' : 'none';
     });
-    
-    // Copy class suggestion on click
-    overlayEl.querySelectorAll('.elpicker-suggest-chip').forEach(chip => {
+
+    qsa(overlayEl, '.elpicker-nav-arrow[data-nav]').forEach(arrow => {
+      arrow.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const dir = arrow.dataset.nav;
+        if (dir === 'up') navigateParent();
+        else if (dir === 'down') navigateChild();
+        else if (dir === 'left') navigateSiblingPrev();
+        else if (dir === 'right') navigateSiblingNext();
+      });
+    });
+
+    qsa(overlayEl, '.elpicker-suggest-chip').forEach(chip => {
       chip.addEventListener('click', () => {
         navigator.clipboard.writeText(chip.textContent);
         showToast(`Copied: ${chip.textContent}`);
@@ -457,7 +909,7 @@
 
   function updateCodePreview() {
     if (!overlayEl || !state.selectedElement) return;
-    const codeEl = overlayEl.querySelector('.elpicker-code');
+    const codeEl = qs(overlayEl, '.elpicker-code');
     if (codeEl) {
       codeEl.textContent = getElementContext(state.selectedElement);
     }
@@ -620,6 +1072,7 @@
     const context = getElementContext(state.selectedElement);
     navigator.clipboard.writeText(context).then(() => {
       showToast('Copied to clipboard!');
+      closeAfterAction();
     });
   }
 
@@ -758,9 +1211,34 @@
         }
         break;
         
+      case 'Enter':
+        if (state.selectedElement) {
+          e.preventDefault();
+          e.stopPropagation();
+          openInEditor();
+        }
+        break;
+
+      case ',':
+        if (state.selectedElement) {
+          e.preventDefault();
+          e.stopPropagation();
+          cycleFormat(-1);
+        }
+        break;
+
+      case '.':
+        if (state.selectedElement) {
+          e.preventDefault();
+          e.stopPropagation();
+          cycleFormat(1);
+        }
+        break;
+
       case 'c':
         if ((e.metaKey || e.ctrlKey) && state.selectedElement) {
           e.preventDefault();
+          e.stopPropagation();
           copyContext();
         }
         break;
@@ -782,6 +1260,15 @@
     document.addEventListener('keydown', onKeyDown, true);
     
     showToast('ElPicker activated! Click or drag to select.');
+    showTopBanner('ElPicker activated! Click or drag to select.');
+  }
+
+  function showTopBanner(message) {
+    const banner = document.createElement('div');
+    banner.className = 'elpicker-top-banner';
+    banner.textContent = message;
+    document.body.appendChild(banner);
+    setTimeout(() => banner.remove(), 2000);
   }
 
   function deactivate() {
@@ -821,6 +1308,18 @@
       sendResponse({ active: state.isActive });
     } else if (request.action === 'getState') {
       sendResponse({ active: state.isActive });
+    } else if (request.action === 'configUpdated') {
+      applySelectorConfig(request.config);
+      if (state.selectedElement && overlayEl) {
+        createOverlay(state.selectedElement);
+      }
+      sendResponse({ success: true });
+    } else if (request.action === 'editorConfigUpdated') {
+      editorConfig = { ...editorConfig, ...request.config };
+      sendResponse({ success: true });
+    } else if (request.action === 'behaviorConfigUpdated') {
+      behaviorConfig = { ...behaviorConfig, ...request.config };
+      sendResponse({ success: true });
     }
     return true;
   });
