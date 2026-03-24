@@ -1,6 +1,6 @@
 # ElPicker
 
-Chrome extension for selecting and inspecting DOM elements with precision. Click or rectangle-drag to pick elements, navigate the DOM tree with arrow keys, and copy context as CSS selectors, XPath, or raw HTML. Also suggests semantic class names based on element purpose.
+Chrome extension for selecting and inspecting DOM elements with precision. Click to pick elements, navigate the DOM tree with arrow keys, and copy context as CSS selectors, XPath, or raw HTML. Also suggests semantic class names based on element purpose.
 
 | Popup | Overlay in action |
 |-------|-------------------|
@@ -8,7 +8,7 @@ Chrome extension for selecting and inspecting DOM elements with precision. Click
 
 ## What It Does
 
-ElPicker injects a lightweight picker into any web page. Activate it with **Alt+P** (or the toolbar button), then click or drag a rectangle to select an element. An overlay shows the element's tag, id, classes, a breadcrumb trail, and a code preview. Arrow keys let you walk the DOM — up/down for parent/child, left/right for siblings — so you can zero in on exactly the element you need without opening DevTools.
+ElPicker injects a lightweight picker into any web page. Activate it with **Alt+P** (or the toolbar button), then click to select an element. An overlay shows the element's tag, id, classes, a breadcrumb trail, and a code preview. Arrow keys let you walk the DOM — up/down for parent/child, left/right for siblings — so you can zero in on exactly the element you need without opening DevTools.
 
 ### Use Cases
 

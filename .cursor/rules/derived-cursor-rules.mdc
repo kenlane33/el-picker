@@ -58,3 +58,4 @@ This file defines all project rules, coding standards, workflow guidelines, refe
     *   Preference for `data-*` or `role` over classes.
     *   Avoidance of `:nth-of-type` when other attributes suffice.
     *   Shortest-path optimization (e.g. stopping when selector is unique).
+*   Include options and config for setting up avoided and preferred CSS classes.

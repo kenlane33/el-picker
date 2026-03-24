@@ -12,7 +12,7 @@
     }
     
     body {
-      width: 320px;
+      min-width: 300px;
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
       background: #1e1e2e;
       color: #cdd6f4;
@@ -184,10 +184,15 @@
     }
     
     .status {
-      margin-top: 12px;
+      margin-top: 8px;
       text-align: center;
       font-size: 11px;
       color: #6c7086;
+      min-height: 0;
+    }
+
+    .status:empty {
+      display: none;
     }
     
     .status.error {
@@ -382,6 +387,108 @@
       cursor: pointer;
     }
 
+    .shortcut-config {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .shortcut-modifiers {
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+
+    .shortcut-mod-btn {
+      padding: 4px 10px;
+      border-radius: 5px;
+      border: 1px solid #45475a;
+      background: #313244;
+      color: #a6adc8;
+      font-size: 11px;
+      font-family: 'SF Mono', Monaco, monospace;
+      cursor: pointer;
+      transition: all 0.15s ease;
+      user-select: none;
+    }
+
+    .shortcut-mod-btn:hover {
+      border-color: #89b4fa;
+      color: #cdd6f4;
+    }
+
+    .shortcut-mod-btn.active {
+      background: rgba(137, 180, 250, 0.2);
+      border-color: #89b4fa;
+      color: #89b4fa;
+    }
+
+    .shortcut-key-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .shortcut-key-row .label-text {
+      font-size: 11px;
+      color: #a6adc8;
+      white-space: nowrap;
+    }
+
+    .shortcut-key-select {
+      flex: 1;
+      padding: 6px 8px;
+      background: #313244;
+      border: 1px solid #45475a;
+      border-radius: 6px;
+      color: #cdd6f4;
+      font-family: 'SF Mono', Monaco, monospace;
+      font-size: 12px;
+      cursor: pointer;
+    }
+
+    .shortcut-key-select:focus {
+      outline: none;
+      border-color: #89b4fa;
+    }
+
+    .shortcut-preview {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      padding: 8px 10px;
+      background: #11111b;
+      border: 1px solid #313244;
+      border-radius: 6px;
+      font-size: 12px;
+      justify-content: center;
+    }
+
+    .shortcut-preview kbd {
+      background: #45475a;
+      border: 1px solid #585b70;
+      border-radius: 4px;
+      padding: 2px 8px;
+      font-size: 11px;
+      font-family: 'SF Mono', Monaco, monospace;
+      color: #89b4fa;
+    }
+
+    .shortcut-preview .shortcut-plus {
+      color: #585b70;
+      font-size: 10px;
+    }
+
+    .shortcut-warning {
+      font-size: 10px;
+      color: #f38ba8;
+      display: none;
+    }
+
+    .shortcut-warning.visible {
+      display: block;
+    }
+
     .guide-panel {
       display: none;
       margin-top: 8px;
@@ -554,20 +661,22 @@
     </svg>
     <span id="btnText">Activate Picker</span>
   </button>
-  
+
+  <p class="status" id="status"></p>
+
   <div class="shortcuts">
     <div class="shortcuts-title">Keyboard Shortcuts</div>
     <div class="shortcut-row">
       <span class="shortcut-label">Toggle Picker</span>
-      <div class="shortcut-keys"><kbd>Ctrl</kbd><kbd>Shift</kbd><kbd>E</kbd></div>
+      <div class="shortcut-keys" id="activateShortcutDisplay"><kbd>Ctrl</kbd><kbd>Shift</kbd><kbd>E</kbd></div>
     </div>
     <div class="shortcut-row">
       <span class="shortcut-label">Navigate Parent/Child</span>
-      <div class="shortcut-keys"><kbd>Up</kbd><kbd>Down</kbd></div>
+      <div class="shortcut-keys"><kbd>W</kbd><kbd>S</kbd> <kbd>Up</kbd><kbd>Down</kbd></div>
     </div>
     <div class="shortcut-row">
       <span class="shortcut-label">Navigate Siblings</span>
-      <div class="shortcut-keys"><kbd>Left</kbd><kbd>Right</kbd></div>
+      <div class="shortcut-keys"><kbd>A</kbd><kbd>D</kbd><kbd>Left</kbd><kbd>Right</kbd></div>
     </div>
     <div class="shortcut-row">
       <span class="shortcut-label">Back / Cancel / Exit</span>
@@ -582,8 +691,8 @@
       <div class="shortcut-keys"><kbd>Enter</kbd></div>
     </div>
     <div class="shortcut-row">
-      <span class="shortcut-label">Cycle Format</span>
-      <div class="shortcut-keys"><kbd>,</kbd> <kbd>.</kbd></div>
+      <span class="shortcut-label">Cycle Tab</span>
+      <div class="shortcut-keys"><kbd>&lt;</kbd><kbd>&gt;</kbd><kbd>,</kbd><kbd>.</kbd></div>
     </div>
   </div>
   
@@ -701,6 +810,73 @@
   </div>
 
   <div class="settings-section">
+    <button class="settings-toggle" id="shortcutSettingsToggle">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <rect x="2" y="4" width="20" height="16" rx="2"/>
+        <path d="M6 8h.01M10 8h.01M14 8h.01M18 8h.01M8 12h.01M12 12h.01M16 12h.01M6 16h12"/>
+      </svg>
+      <span>Activation Shortcut</span>
+      <svg class="chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <polyline points="6 9 12 15 18 9"/>
+      </svg>
+    </button>
+
+    <div class="settings-panel" id="shortcutSettingsPanel">
+      <div class="shortcut-config">
+        <div class="setting-group">
+          <label class="setting-label">
+            <span class="label-text">Modifiers</span>
+            <span class="label-hint">Pick one or more modifier keys</span>
+          </label>
+          <div class="shortcut-modifiers" id="shortcutModifiers">
+            <button class="shortcut-mod-btn active" data-mod="ctrl" id="modCtrl">Ctrl</button>
+            <button class="shortcut-mod-btn active" data-mod="shift" id="modShift">Shift</button>
+            <button class="shortcut-mod-btn" data-mod="alt" id="modAlt">Alt</button>
+            <button class="shortcut-mod-btn" data-mod="meta" id="modMeta">Cmd</button>
+          </div>
+        </div>
+
+        <div class="setting-group">
+          <div class="shortcut-key-row">
+            <span class="label-text">Key</span>
+            <select class="shortcut-key-select" id="shortcutKey">
+              <option value="a">A</option><option value="b">B</option>
+              <option value="c">C</option><option value="d">D</option>
+              <option value="e" selected>E</option><option value="f">F</option>
+              <option value="g">G</option><option value="h">H</option>
+              <option value="i">I</option><option value="j">J</option>
+              <option value="k">K</option><option value="l">L</option>
+              <option value="m">M</option><option value="n">N</option>
+              <option value="o">O</option><option value="p">P</option>
+              <option value="q">Q</option><option value="r">R</option>
+              <option value="s">S</option><option value="t">T</option>
+              <option value="u">U</option><option value="v">V</option>
+              <option value="w">W</option><option value="x">X</option>
+              <option value="y">Y</option><option value="z">Z</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="setting-group">
+          <span class="label-text">Preview</span>
+          <div class="shortcut-preview" id="shortcutPreview">
+            <kbd>Ctrl</kbd><span class="shortcut-plus">+</span>
+            <kbd>Shift</kbd><span class="shortcut-plus">+</span>
+            <kbd>E</kbd>
+          </div>
+        </div>
+
+        <p class="shortcut-warning" id="shortcutWarning">Pick at least one modifier key</p>
+
+        <div class="settings-actions">
+          <button class="settings-btn settings-btn-reset" id="resetShortcut">Reset</button>
+          <button class="settings-btn settings-btn-save" id="saveShortcut">Save</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="settings-section">
     <button class="settings-toggle" id="guideToggle">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
         <path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/>
@@ -726,8 +902,6 @@
       <div class="guide-content" id="guideContent"></div>
     </div>
   </div>
-
-  <p class="status" id="status"></p>
 
   <script type="text/markdown" id="guideMarkdown">
 # ElPicker: Add "Open in Editor" to Your Project

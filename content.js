@@ -2,10 +2,9 @@
  * ElPicker - Your friendly, versatile context pal.
  * 
  * Features:
- * - Click or rectangle drag to select elements
- * - Live highlight preview
- * - Navigate parent/child/sibling chains with arrow keys
- * - Copy context as XPath, full HTML, or outer HTML
+ * - Click to select elements with live highlight preview
+ * - Navigate parent/child/sibling chains with arrow keys or WASD
+ * - Copy context as CSS selector, XPath, or HTML
  * - Semantic class suggestions (xx-- functional, oo-- semantic)
  */
 
@@ -16,18 +15,18 @@
   const state = {
     isActive: false,
     isSelecting: false,
-    isDragging: false,
-    dragStart: null,
     selectedElement: null,
     hoveredElement: null,
     childIndex: 0,
-    showCode: true,
-    outputFormat: 'shortSelector' // 'shortSelector', 'shortXpath', 'selector', 'xpath', 'outerhtml', 'innerhtml'
+    activeTab: 'smart' // 'smart', 'shortSelector', 'shortXpath', 'selector', 'xpath', 'outerhtml', 'innerhtml'
   };
 
   // DOM references
-  let rectEl = null;
   let overlayEl = null;
+
+  // Cache icon URL at load time (before extension context could be invalidated)
+  let iconUrl = '';
+  try { iconUrl = chrome.runtime.getURL('icons/icon128.png'); } catch (e) { /* ignore */ }
 
   // ===== Utility Functions =====
 
@@ -35,6 +34,26 @@
   function qsa(parent, sel) { return parent.querySelectorAll(sel); }
   function elClick(parent, sel, fn) { qs(parent, sel).addEventListener('click', fn); }
   function elOn(parent, sel, evt, fn) { qs(parent, sel).addEventListener(evt, fn); }
+
+  const isMac = (() => {
+    const ua = navigator.userAgent || '';
+    const plat = navigator.platform || navigator.userAgentData?.platform || '';
+    return /mac/i.test(plat) || /macintosh/i.test(ua);
+  })();
+
+  function kbd(label) {
+    return `<span class="elpicker-kbd">${label}</span>`;
+  }
+
+  function makeEl(haml, content, parent) {
+    const [tag, ...classes] = haml.split('.');
+    const el = document.createElement(tag || 'div');
+    if (classes.length) el.className = classes.join(' ');
+    if (typeof content === 'string') el.textContent = content;
+    else if (content instanceof Element) el.appendChild(content);
+    if (parent !== null) (parent || document.body).appendChild(el);
+    return el;
+  }
 
   function getXPath(element) {
     if (!element) return '';
@@ -98,6 +117,49 @@
     }
   }
 
+  // Shortcut configuration (loaded from storage)
+  let shortcutConfig = {
+    key: 'e',
+    ctrl: !isMac,
+    shift: true,
+    alt: false,
+    meta: isMac
+  };
+
+  async function loadShortcutConfig() {
+    try {
+      const result = await chrome.storage.sync.get('shortcutConfig');
+      if (result.shortcutConfig) {
+        shortcutConfig = { ...shortcutConfig, ...result.shortcutConfig };
+      }
+    } catch (e) {
+      console.log('ElPicker: Could not load shortcut config', e);
+    }
+  }
+
+  function matchesShortcut(e) {
+    if (!shortcutConfig.key || !e.key) return false;
+    return e.key.toLowerCase() === shortcutConfig.key.toLowerCase()
+      && e.ctrlKey === !!shortcutConfig.ctrl
+      && e.shiftKey === !!shortcutConfig.shift
+      && e.altKey === !!shortcutConfig.alt
+      && e.metaKey === !!shortcutConfig.meta;
+  }
+
+  function onGlobalKeyDown(e) {
+    if (matchesShortcut(e)) {
+      e.preventDefault();
+      e.stopPropagation();
+      if (state.isActive) {
+        deactivate();
+      } else {
+        activate();
+      }
+    }
+  }
+
+  document.addEventListener('keydown', onGlobalKeyDown, true);
+
   // Behavior configuration (loaded from storage)
   let behaviorConfig = { stayOpen: false };
 
@@ -118,19 +180,19 @@
     }
   }
 
-  async function loadFormatPreference() {
+  async function loadTabPreference() {
     try {
-      const result = await chrome.storage.sync.get('formatPreference');
-      if (result.formatPreference && FORMAT_ORDER.includes(result.formatPreference)) {
-        state.outputFormat = result.formatPreference;
+      const result = await chrome.storage.sync.get('tabPreference');
+      if (result.tabPreference && TAB_ORDER.includes(result.tabPreference)) {
+        state.activeTab = result.tabPreference;
       }
     } catch (e) {
-      console.log('ElPicker: Could not load format preference', e);
+      console.log('ElPicker: Could not load tab preference', e);
     }
   }
 
-  function saveFormatPreference(format) {
-    try { chrome.storage.sync.set({ formatPreference: format }); }
+  function saveTabPreference(tab) {
+    try { chrome.storage.sync.set({ tabPreference: tab }); }
     catch (e) { /* ignore */ }
   }
 
@@ -138,7 +200,8 @@
   loadSelectorConfig();
   loadEditorConfig();
   loadBehaviorConfig();
-  loadFormatPreference();
+  loadShortcutConfig();
+  loadTabPreference();
 
   function isIdAllowed(id) {
     if (!id) return false;
@@ -150,18 +213,17 @@
     const normal = [];
 
     for (const cls of classes) {
-      if (selectorConfig.avoidClassPatterns.some(p => p.test(cls))) {
-        continue; // Skip avoided classes
-      }
-      if (selectorConfig.preferClassPatterns.some(p => p.test(cls))) {
-        preferred.push(cls);
+      if (selectorConfig.avoidClassPatterns.some(p => p.test(cls))) continue;
+      const idx = selectorConfig.preferClassPatterns.findIndex(p => p.test(cls));
+      if (idx !== -1) {
+        preferred.push({ cls, idx });
       } else {
         normal.push(cls);
       }
     }
 
-    // Return preferred classes first, then normal classes
-    return [...preferred, ...normal];
+    preferred.sort((a, b) => a.idx - b.idx);
+    return [...preferred.map(p => p.cls), ...normal];
   }
 
   function getCssSelector(element) {
@@ -191,7 +253,7 @@
         const sortedClasses = sortClassesByPreference(rawClasses);
 
         if (sortedClasses.length > 0) {
-          // Use up to 2 classes, preferring xx--/oo-- prefixed ones
+          // Use up to 2 classes, preferring oo--/xx-- prefixed ones
           selector += '.' + sortedClasses.slice(0, 2).join('.');
         }
       }
@@ -216,7 +278,8 @@
 
   function classScore(cls) {
     if (selectorConfig.avoidClassPatterns.some(p => p.test(cls))) return -1;
-    if (selectorConfig.preferClassPatterns.some(p => p.test(cls))) return 100;
+    const prefIdx = selectorConfig.preferClassPatterns.findIndex(p => p.test(cls));
+    if (prefIdx !== -1) return 200 - prefIdx;
     if (/^[A-Z]/.test(cls)) return 40;
     if (/__/.test(cls)) return 30;
     if (/^[a-z]+--.+/.test(cls)) return 25;
@@ -468,7 +531,8 @@
   }
 
   function getElementContext(element) {
-    switch (state.outputFormat) {
+    const fmt = state.activeTab === 'smart' ? 'shortSelector' : state.activeTab;
+    switch (fmt) {
       case 'shortSelector':
         return getShortCssSelector(element);
       case 'shortXpath':
@@ -577,16 +641,31 @@
 
   // ===== Source-to-Editor =====
 
-  const FORMAT_ORDER = ['shortSelector', 'shortXpath', 'selector', 'xpath', 'outerhtml', 'innerhtml'];
-
-  const FORMAT_LABELS = {
-    shortSelector: 'Short CSS',
-    shortXpath: 'Short XPath',
-    selector: 'Full CSS',
-    xpath: 'Full XPath',
-    outerhtml: 'Outer HTML',
-    innerhtml: 'Inner HTML'
+  const TAB_ORDER = ['smart', 'shortSelector', 'shortXpath', 'selector', 'xpath', 'outerhtml', 'innerhtml'];
+  const TAB_LABELS = {
+    smart: 'Smart',
+    shortSelector: 'S.CSS',
+    shortXpath: 'S.XPath',
+    selector: 'CSS',
+    xpath: 'XPath',
+    outerhtml: 'Outer',
+    innerhtml: 'Inner'
   };
+
+  // Prime-based hue rotation for rainbow class coloring
+  function primeHue(i) {
+    return (i * 137 + 30) % 360;
+  }
+
+  function hueColor(i) {
+    return `hsl(${primeHue(i)},65%,62%)`;
+  }
+
+  function renderColoredClasses(classes) {
+    return classes.map((cls, i) =>
+      `<span style="color:${hueColor(i)}">${escapeHtml(cls)}</span>`
+    ).join(' ');
+  }
 
   function findDataSource(element) {
     const match = element.closest('[data-source]');
@@ -639,25 +718,43 @@
     closeAfterAction();
   }
 
-  function cycleFormat(direction) {
-    const idx = FORMAT_ORDER.indexOf(state.outputFormat);
-    const next = (idx + direction + FORMAT_ORDER.length) % FORMAT_ORDER.length;
-    state.outputFormat = FORMAT_ORDER[next];
-    saveFormatPreference(state.outputFormat);
+  function cycleTab(direction) {
+    const idx = TAB_ORDER.indexOf(state.activeTab);
+    const next = (idx + direction + TAB_ORDER.length) % TAB_ORDER.length;
+    switchTab(TAB_ORDER[next]);
+  }
+
+  function switchTab(tab) {
+    state.activeTab = tab;
+    saveTabPreference(tab);
     if (overlayEl) {
-      const select = qs(overlayEl, '#elpicker-format');
-      if (select) select.value = state.outputFormat;
-      updateCodePreview();
+      qsa(overlayEl, '.elpicker-tab').forEach(t => {
+        t.classList.toggle('elpicker-tab-active', t.dataset.tab === tab);
+      });
+      updateTabContent();
     }
-    showToast(`Format: ${FORMAT_LABELS[state.outputFormat] || state.outputFormat}`);
+  }
+
+  function updateTabContent() {
+    if (!overlayEl || !state.selectedElement) return;
+    const area = qs(overlayEl, '.elpicker-tree-area');
+    if (!area) return;
+    if (state.activeTab === 'smart') {
+      area.innerHTML = buildSmartTreeHTML(state.selectedElement);
+      area.scrollTop = area.scrollHeight;
+      bindTreeEvents(area);
+    } else {
+      const text = getElementContext(state.selectedElement);
+      area.innerHTML = `<div class="elpicker-code-view">${escapeHtml(text)}</div>`;
+    }
   }
 
   function getOptimalOverlayPosition(element) {
     const rect = element.getBoundingClientRect();
     const viewportW = window.innerWidth;
     const viewportH = window.innerHeight;
-    const overlayW = 400;
-    const overlayH = 350;
+    const overlayW = 380;
+    const overlayH = 260;
     const padding = 20;
     
     // Determine which quadrant has most space away from element
@@ -690,36 +787,8 @@
 
   // ===== UI Creation =====
 
-  function createRectElement() {
-    if (rectEl) return rectEl;
-    rectEl = document.createElement('div');
-    rectEl.className = 'elpicker-rect';
-    document.body.appendChild(rectEl);
-    return rectEl;
-  }
-
-  function updateRect(x1, y1, x2, y2) {
-    if (!rectEl) createRectElement();
-    const left = Math.min(x1, x2);
-    const top = Math.min(y1, y2);
-    const width = Math.abs(x2 - x1);
-    const height = Math.abs(y2 - y1);
-    
-    rectEl.style.left = `${left}px`;
-    rectEl.style.top = `${top}px`;
-    rectEl.style.width = `${width}px`;
-    rectEl.style.height = `${height}px`;
-    rectEl.style.display = 'block';
-  }
-
-  function hideRect() {
-    if (rectEl) {
-      rectEl.style.display = 'none';
-    }
-  }
-
   function getNavInfo(element) {
-    const elFilter = el => !el.classList.contains('elpicker-overlay') && !el.classList.contains('elpicker-rect');
+    const elFilter = el => !el.classList.contains('elpicker-overlay');
     const parent = element.parentElement;
     const hasParent = parent && parent !== document.body && parent !== document.documentElement;
     const childCount = Array.from(element.children).filter(elFilter).length;
@@ -734,40 +803,210 @@
   }
 
   function buildNavCompass(nav, scale) {
-    const s = scale;
-    const dot = (count, cls) => {
+    const tri = (dir, cls) => {
+      const rot = { up: 0, right: 90, down: 180, left: 270 }[dir];
+      return `<span class="elpicker-nav-arrow ${cls}" data-nav="${dir}">` +
+        `<svg width="6" height="5" viewBox="0 0 6 5" style="transform:rotate(${rot}deg)">` +
+        `<polygon points="3,0 6,5 0,5" fill="currentColor"/>` +
+        `</svg></span>`;
+    };
+    const dots = (count, cls) => {
       const max = 5;
       const n = Math.min(count, max);
-      let dots = '';
-      for (let i = 0; i < n; i++) dots += `<span class="elpicker-nav-dot"></span>`;
-      if (count > max) dots += `<span class="elpicker-nav-dot elpicker-nav-dot-plus"></span>`;
-      return `<span class="elpicker-nav-dots ${cls}">${dots}</span>`;
+      let d = '';
+      for (let i = 0; i < n; i++) d += '<span class="elpicker-nav-dot"></span>';
+      if (count > max) d += '<span class="elpicker-nav-dot elpicker-nav-dot-plus"></span>';
+      return `<span class="elpicker-nav-dots ${cls}">${d}</span>`;
     };
     const upCls = nav.hasParent ? 'elpicker-nav-active' : 'elpicker-nav-dim';
     const downCls = nav.childCount > 0 ? 'elpicker-nav-active' : 'elpicker-nav-dim';
     const leftCls = nav.prevCount > 0 ? 'elpicker-nav-active' : 'elpicker-nav-dim';
     const rightCls = nav.nextCount > 0 ? 'elpicker-nav-active' : 'elpicker-nav-dim';
-    return `<div class="elpicker-nav-compass" style="transform:scale(${s})">` +
-      `<div class="elpicker-nav-row">`+
-        `<span class="elpicker-nav-arrow ${upCls}" data-nav="up">^</span>`+
-      `</div>`+
-      `<div class="elpicker-nav-row">`+
-        `<span class="elpicker-nav-arrow ${leftCls}" data-nav="left">&lt;</span>`+
-        `<span class="elpicker-nav-arrow ${downCls}" data-nav="down">v</span>`+
-        `<span class="elpicker-nav-arrow ${rightCls}" data-nav="right">&gt;</span>`+
-      `</div>`+
-      `<div class="elpicker-nav-row elpicker-nav-dots-row">`+
-        `${dot(nav.prevCount, 'elpicker-nav-dots-left')}`+
-        `${dot(nav.childCount, 'elpicker-nav-dots-center')}`+
-        `${dot(nav.nextCount, 'elpicker-nav-dots-right')}`+
-      `</div>`+
+    return `<div class="elpicker-nav-compass" style="transform:scale(${scale})">` +
+      `<div class="elpicker-nc-up">${tri('up', upCls)}</div>` +
+      `<div class="elpicker-nc-left-dots">${dots(nav.prevCount, 'elpicker-nav-dots-left')}</div>` +
+      `<div class="elpicker-nc-left">${tri('left', leftCls)}</div>` +
+      `<div class="elpicker-nc-down">${tri('down', downCls)}</div>` +
+      `<div class="elpicker-nc-right">${tri('right', rightCls)}</div>` +
+      `<div class="elpicker-nc-right-dots">${dots(nav.nextCount, 'elpicker-nav-dots-right')}</div>` +
+      `<div class="elpicker-nc-bottom-dots">${dots(nav.childCount, 'elpicker-nav-dots-center')}</div>` +
     `</div>`;
+  }
+
+  // ===== Smart Tree Functions =====
+
+  let currentChain = [];
+  let tooltipEl = null;
+
+  function getAncestorChain(element, maxDepth) {
+    maxDepth = maxDepth || 20;
+    const chain = [];
+    let el = element;
+    while (el && el.nodeType === 1 && el !== document.documentElement && chain.length < maxDepth) {
+      if (!el.classList.contains('elpicker-overlay') && !el.classList.contains('elpicker-copied-toast') && !el.classList.contains('elpicker-colored-toast')) {
+        chain.unshift(el);
+      }
+      el = el.parentElement;
+    }
+    return chain;
+  }
+
+  function classifyClasses(el) {
+    const raw = (el.className && typeof el.className === 'string')
+      ? el.className.trim().split(/\s+/).filter(Boolean) : [];
+    const semantic = [];
+    const rest = [];
+    for (const cls of raw) {
+      if (selectorConfig.avoidClassPatterns.some(p => p.test(cls))) continue;
+      if (selectorConfig.preferClassPatterns.some(p => p.test(cls))) {
+        semantic.push(cls);
+      } else {
+        rest.push(cls);
+      }
+    }
+    return { semantic, rest, all: [...semantic, ...rest] };
+  }
+
+  function buildSmartTreeHTML(selectedElement) {
+    currentChain = getAncestorChain(selectedElement);
+    let html = '';
+    for (let i = 0; i < currentChain.length; i++) {
+      const el = currentChain[i];
+      const tag = el.tagName.toLowerCase();
+      const isSelected = el === selectedElement;
+      const { semantic, rest, all } = classifyClasses(el);
+      const id = el.id && isIdAllowed(el.id) ? el.id : '';
+      const selectedCls = isSelected ? ' elpicker-tree-selected' : '';
+
+      let row = `<div class="elpicker-tree-row${selectedCls}" data-chain-idx="${i}">`;
+      row += `<span class="elpicker-tree-tag">${escapeHtml(tag)}</span>`;
+      if (id) {
+        row += `<span class="elpicker-tree-id">#${escapeHtml(id)}</span>`;
+      }
+      for (const cls of semantic) {
+        row += `<span class="elpicker-tree-semantic" data-copy="${escapeHtml(cls)}">${escapeHtml(cls)}</span>`;
+      }
+      if (rest.length > 0) {
+        const allClassStr = all.join(' ');
+        row += `<span class="elpicker-tree-classes" data-copy-classes="${escapeHtml(allClassStr)}" data-tooltip-tag="${escapeHtml(tag)}" data-tooltip-semantic="${escapeHtml(semantic.join(' '))}" data-tooltip-rest="${escapeHtml(rest.join(' '))}">${renderColoredClasses(rest)}</span>`;
+      }
+      row += '</div>';
+      html += row;
+    }
+    return html;
+  }
+
+  function buildHamlSelector(el) {
+    const tag = el.tagName.toLowerCase();
+    const id = el.id && isIdAllowed(el.id) ? '#' + el.id : '';
+    const { all } = classifyClasses(el);
+    const dotClasses = all.length ? '.' + all.join('.') : '';
+    return tag + id + dotClasses;
+  }
+
+  function bindTreeEvents(area) {
+    area.addEventListener('click', onTreeClick);
+    area.addEventListener('mouseover', onTreeMouseOver);
+    area.addEventListener('mouseout', onTreeMouseOut);
+  }
+
+  function onTreeClick(e) {
+    const semantic = e.target.closest('.elpicker-tree-semantic');
+    if (semantic) {
+      e.stopPropagation();
+      const cls = semantic.dataset.copy;
+      copyAndToast(cls);
+      return;
+    }
+    const classes = e.target.closest('.elpicker-tree-classes');
+    if (classes) {
+      e.stopPropagation();
+      const all = classes.dataset.copyClasses;
+      copyAndColorToast(all);
+      return;
+    }
+    const row = e.target.closest('.elpicker-tree-row');
+    if (row) {
+      const idx = parseInt(row.dataset.chainIdx);
+      const el = currentChain[idx];
+      if (el) {
+        const sel = buildHamlSelector(el);
+        copyAndToast(sel);
+      }
+    }
+  }
+
+  function onTreeMouseOver(e) {
+    const classes = e.target.closest('.elpicker-tree-classes');
+    if (!classes) return;
+    const tag = classes.dataset.tooltipTag || '';
+    const semStr = classes.dataset.tooltipSemantic || '';
+    const restStr = classes.dataset.tooltipRest || '';
+    const semParts = semStr ? semStr.split(' ') : [];
+    const restParts = restStr ? restStr.split(' ') : [];
+
+    let html = `<span class="elpicker-tooltip-tag">${escapeHtml(tag)}</span>`;
+    for (const s of semParts) {
+      html += ` <span class="elpicker-tooltip-semantic">${escapeHtml(s)}</span>`;
+    }
+    for (let i = 0; i < restParts.length; i++) {
+      html += ` <span style="color:${hueColor(i)}">${escapeHtml(restParts[i])}</span>`;
+    }
+
+    showElTooltip(e, html);
+  }
+
+  function onTreeMouseOut(e) {
+    const classes = e.target.closest('.elpicker-tree-classes');
+    if (!classes) hideElTooltip();
+  }
+
+  function showElTooltip(e, html) {
+    if (!tooltipEl) {
+      tooltipEl = document.createElement('div');
+      tooltipEl.className = 'elpicker-tooltip';
+      document.body.appendChild(tooltipEl);
+    }
+    tooltipEl.innerHTML = html;
+    tooltipEl.style.display = 'block';
+    const rect = e.target.getBoundingClientRect();
+    tooltipEl.style.left = Math.min(rect.left, window.innerWidth - 360) + 'px';
+    tooltipEl.style.top = (rect.top - tooltipEl.offsetHeight - 6) + 'px';
+    if (parseInt(tooltipEl.style.top) < 4) {
+      tooltipEl.style.top = (rect.bottom + 6) + 'px';
+    }
+  }
+
+  function hideElTooltip() {
+    if (tooltipEl) tooltipEl.style.display = 'none';
+  }
+
+  function copyAndToast(text) {
+    navigator.clipboard.writeText(text).then(() => {
+      showToast(`Copied: ${text}`);
+    });
+  }
+
+  function copyAndColorToast(classStr) {
+    navigator.clipboard.writeText(classStr).then(() => {
+      const parts = classStr.split(/\s+/).filter(Boolean);
+      showColoredToast('Copied:', parts);
+    });
+  }
+
+  function showColoredToast(prefix, parts) {
+    const toast = document.createElement('div');
+    toast.className = 'elpicker-colored-toast';
+    let html = `<span class="elpicker-toast-prefix">${escapeHtml(prefix)}</span> `;
+    html += parts.map((p, i) => `<span style="color:${hueColor(i)}">${escapeHtml(p)}</span>`).join(' ');
+    toast.innerHTML = html;
+    document.body.appendChild(toast);
+    setTimeout(() => toast.remove(), 2000);
   }
 
   function createOverlay(element) {
     removeOverlay();
 
-    const suggestions = suggestSemanticClasses(element);
     const pos = getOptimalOverlayPosition(element);
 
     overlayEl = document.createElement('div');
@@ -775,113 +1014,80 @@
     overlayEl.style.left = `${pos.left}px`;
     overlayEl.style.top = `${pos.top}px`;
 
-    const tagName = element.tagName.toLowerCase();
-    const id = element.id && isIdAllowed(element.id) ? `#${element.id}` : '';
-    const rawClasses = element.className && typeof element.className === 'string'
-      ? element.className.split(/\s+/).filter(Boolean)
-      : [];
-    const classes = sortClassesByPreference(rawClasses).join(' ');
-
     const nav = getNavInfo(element);
+
+    const tabsHTML = TAB_ORDER.map(t =>
+      `<button class="elpicker-tab${state.activeTab === t ? ' elpicker-tab-active' : ''}" data-tab="${t}">${TAB_LABELS[t]}</button>`
+    ).join('');
+
+    const treeContent = state.activeTab === 'smart'
+      ? buildSmartTreeHTML(element)
+      : `<div class="elpicker-code-view">${escapeHtml(getElementContext(element))}</div>`;
+
+    const src = findDataSource(element);
 
     overlayEl.innerHTML = `
       <div class="elpicker-header">
         <div class="elpicker-title">
-          <img class="elpicker-title-icon" src="${chrome.runtime.getURL('icons/icon128.png')}" alt="ElPicker" width="18" height="18">
+          ${iconUrl ? `<img class="elpicker-title-icon" src="${iconUrl}" alt="" width="14" height="14">` : ''}
           ElPicker
         </div>
         ${buildNavCompass(nav, 1)}
         <button class="elpicker-close" title="Close (Esc)">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M18 6L6 18M6 6l12 12"/>
           </svg>
         </button>
       </div>
-      
-      <div class="elpicker-breadcrumb">${getBreadcrumb(element)}</div>
-      
-      <div class="elpicker-nav-hint">
-        <kbd>Up</kbd>/<kbd>Down</kbd> parent/child
-        <kbd>Left</kbd>/<kbd>Right</kbd> siblings
-        <kbd>Esc</kbd> back
-      </div>
-      
-      <div class="elpicker-preview">
-        <div class="elpicker-preview-element">
-          <div class="elpicker-preview-label">Element</div>
-          <div class="elpicker-preview-tag">&lt;${tagName}&gt;</div>
-          ${id ? `<div class="elpicker-preview-id">id: ${id}</div>` : ''}
-          ${classes ? `<div class="elpicker-preview-classes">class: ${classes}</div>` : ''}
-        </div>
-      </div>
-      
-      ${(suggestions.xx.length > 0 || suggestions.oo.length > 0) ? `
-        <div class="elpicker-suggest-panel">
-          <div class="elpicker-suggest-title">Suggested Classes</div>
-          <div class="elpicker-suggest-chips">
-            ${suggestions.xx.map(s => `<span class="elpicker-suggest-chip elpicker-suggest-chip-xx">xx--${s}</span>`).join('')}
-            ${suggestions.oo.map(s => `<span class="elpicker-suggest-chip elpicker-suggest-chip-oo">oo--${s}</span>`).join('')}
-          </div>
+
+      <div class="elpicker-tabs">${tabsHTML}</div>
+
+      <div class="elpicker-tree-area">${treeContent}</div>
+
+      ${src ? `
+        <div class="elpicker-source-panel">
+          <span class="elpicker-source-label">Src</span>
+          <span class="elpicker-source-file">${escapeHtml(formatSourceDisplay(src))}</span>
         </div>
       ` : ''}
-      
-      <div class="elpicker-code-section">
-        <label class="elpicker-code-toggle">
-          <input type="checkbox" id="elpicker-show-code" ${state.showCode ? 'checked' : ''}>
-          Show Code
-        </label>
-        <div class="elpicker-code" style="display: ${state.showCode ? 'block' : 'none'}">
-          ${escapeHtml(getElementContext(element))}
-        </div>
-      </div>
-      
-      ${(() => {
-        const src = findDataSource(element);
-        return src ? `
-          <div class="elpicker-source-panel">
-            <div class="elpicker-source-label">Source</div>
-            <div class="elpicker-source-file">${escapeHtml(formatSourceDisplay(src))}</div>
-          </div>
-        ` : '';
-      })()}
 
       <div class="elpicker-actions">
-        <select class="elpicker-format-select" id="elpicker-format">
-          ${FORMAT_ORDER.map(f =>
-            `<option value="${f}" ${state.outputFormat === f ? 'selected' : ''}>${FORMAT_LABELS[f]}</option>`
-          ).join('')}
-        </select>
-        <button class="elpicker-btn elpicker-btn-primary" id="elpicker-copy">Copy</button>
-        <button class="elpicker-btn elpicker-btn-open ${findDataSource(element) ? '' : 'elpicker-btn-disabled'}" id="elpicker-open" title="Open in editor (Enter)">
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <button class="elpicker-btn elpicker-btn-primary" id="elpicker-copy">Copy${kbd(isMac ? '\u2318C' : 'Ctrl-C')}</button>
+        <button class="elpicker-btn elpicker-btn-open ${src ? '' : 'elpicker-btn-disabled'}" id="elpicker-open" title="Open in editor (Enter)">
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
             <polyline points="15 3 21 3 21 9"/>
             <line x1="10" y1="14" x2="21" y2="3"/>
           </svg>
-          Open
+          Open${kbd('Enter')}
         </button>
-        <button class="elpicker-btn elpicker-btn-ghost" id="elpicker-reselect">Reselect</button>
+        <button class="elpicker-btn elpicker-btn-ghost" id="elpicker-reselect">Re${kbd('Esc')}</button>
       </div>
     `;
-    
+
     document.body.appendChild(overlayEl);
-    
-    // Event handlers
+
+    // Scroll smart tree to bottom (selected item)
+    if (state.activeTab === 'smart') {
+      const area = qs(overlayEl, '.elpicker-tree-area');
+      if (area) {
+        area.scrollTop = area.scrollHeight;
+        bindTreeEvents(area);
+      }
+    }
+
+    // Tab click handlers
+    qsa(overlayEl, '.elpicker-tab').forEach(tab => {
+      tab.addEventListener('click', () => switchTab(tab.dataset.tab));
+    });
+
+    // Button handlers
     elClick(overlayEl, '.elpicker-close', deactivate);
     elClick(overlayEl, '#elpicker-copy', copyContext);
     elClick(overlayEl, '#elpicker-open', openInEditor);
     elClick(overlayEl, '#elpicker-reselect', startReselect);
-    elOn(overlayEl, '#elpicker-format', 'change', (e) => {
-      state.outputFormat = e.target.value;
-      saveFormatPreference(state.outputFormat);
-      updateCodePreview();
-    });
-    elOn(overlayEl, '#elpicker-show-code', 'change', (e) => {
-      state.showCode = e.target.checked;
-      const codeEl = qs(overlayEl, '.elpicker-code');
-      codeEl.style.display = state.showCode ? 'block' : 'none';
-    });
 
+    // Nav arrows
     qsa(overlayEl, '.elpicker-nav-arrow[data-nav]').forEach(arrow => {
       arrow.addEventListener('click', (e) => {
         e.stopPropagation();
@@ -892,13 +1098,6 @@
         else if (dir === 'right') navigateSiblingNext();
       });
     });
-
-    qsa(overlayEl, '.elpicker-suggest-chip').forEach(chip => {
-      chip.addEventListener('click', () => {
-        navigator.clipboard.writeText(chip.textContent);
-        showToast(`Copied: ${chip.textContent}`);
-      });
-    });
   }
 
   function escapeHtml(text) {
@@ -907,15 +1106,8 @@
     return div.innerHTML;
   }
 
-  function updateCodePreview() {
-    if (!overlayEl || !state.selectedElement) return;
-    const codeEl = qs(overlayEl, '.elpicker-code');
-    if (codeEl) {
-      codeEl.textContent = getElementContext(state.selectedElement);
-    }
-  }
-
   function removeOverlay() {
+    hideElTooltip();
     if (overlayEl) {
       overlayEl.remove();
       overlayEl = null;
@@ -923,10 +1115,7 @@
   }
 
   function showToast(message) {
-    const toast = document.createElement('div');
-    toast.className = 'elpicker-copied-toast';
-    toast.textContent = message;
-    document.body.appendChild(toast);
+    const toast = makeEl('div.elpicker-copied-toast', message);
     setTimeout(() => toast.remove(), 2000);
   }
 
@@ -947,14 +1136,56 @@
     }
   }
 
+  let edgeDotsEl = null;
+
+  function buildEdgeDots(count, cls) {
+    const max = 7;
+    const n = Math.min(count, max);
+    let html = '';
+    for (let i = 0; i < n; i++) html += '<span class="elpicker-edge-dot"></span>';
+    if (count > max) html += '<span class="elpicker-edge-dot elpicker-edge-dot-plus"></span>';
+    return `<span class="elpicker-edge-dots ${cls}">${html}</span>`;
+  }
+
+  function updateEdgeDots(element) {
+    removeEdgeDots();
+    if (!element) return;
+    const nav = getNavInfo(element);
+    const rect = element.getBoundingClientRect();
+
+    edgeDotsEl = document.createElement('div');
+    edgeDotsEl.className = 'elpicker-edge-frame';
+    edgeDotsEl.style.left = `${rect.left + window.scrollX - 5}px`;
+    edgeDotsEl.style.top = `${rect.top + window.scrollY - 5}px`;
+    edgeDotsEl.style.width = `${rect.width + 10}px`;
+    edgeDotsEl.style.height = `${rect.height + 10}px`;
+
+    let html = '';
+    if (nav.hasParent) html += buildEdgeDots(1, 'elpicker-edge-top');
+    if (nav.childCount > 0) html += buildEdgeDots(nav.childCount, 'elpicker-edge-bottom');
+    if (nav.prevCount > 0) html += buildEdgeDots(nav.prevCount, 'elpicker-edge-left');
+    if (nav.nextCount > 0) html += buildEdgeDots(nav.nextCount, 'elpicker-edge-right');
+
+    edgeDotsEl.innerHTML = html;
+    document.body.appendChild(edgeDotsEl);
+  }
+
+  function removeEdgeDots() {
+    if (edgeDotsEl) {
+      edgeDotsEl.remove();
+      edgeDotsEl = null;
+    }
+  }
+
   function selectElement(element) {
     clearSelection();
     clearHighlight();
-    
+
     if (element && element !== document.body && element !== document.documentElement) {
       element.classList.add('elpicker-selected');
       state.selectedElement = element;
       state.childIndex = 0;
+      updateEdgeDots(element);
       createOverlay(element);
     }
   }
@@ -963,57 +1194,7 @@
     if (state.selectedElement) {
       state.selectedElement.classList.remove('elpicker-selected');
     }
-  }
-
-  function getElementsInRect(x1, y1, x2, y2) {
-    const left = Math.min(x1, x2);
-    const top = Math.min(y1, y2);
-    const right = Math.max(x1, x2);
-    const bottom = Math.max(y1, y2);
-    
-    const elements = document.elementsFromPoint((left + right) / 2, (top + bottom) / 2);
-    
-    // Filter to elements that are mostly within the rect
-    return elements.filter(el => {
-      if (el.classList.contains('elpicker-rect') || 
-          el.classList.contains('elpicker-overlay') ||
-          el === document.body ||
-          el === document.documentElement) {
-        return false;
-      }
-      const rect = el.getBoundingClientRect();
-      return rect.left >= left - 5 && rect.right <= right + 5 &&
-             rect.top >= top - 5 && rect.bottom <= bottom + 5;
-    });
-  }
-
-  function findBestMatchInRect(x1, y1, x2, y2) {
-    const centerX = (x1 + x2) / 2;
-    const centerY = (y1 + y2) / 2;
-    const elements = document.elementsFromPoint(centerX, centerY);
-    
-    // Find the smallest element that fits well within the selection
-    let best = null;
-    let bestArea = Infinity;
-    
-    for (const el of elements) {
-      if (el.classList.contains('elpicker-rect') || 
-          el.classList.contains('elpicker-overlay') ||
-          el === document.body ||
-          el === document.documentElement) {
-        continue;
-      }
-      
-      const rect = el.getBoundingClientRect();
-      const area = rect.width * rect.height;
-      
-      if (area < bestArea && area > 0) {
-        best = el;
-        bestArea = area;
-      }
-    }
-    
-    return best;
+    removeEdgeDots();
   }
 
   // ===== Navigation =====
@@ -1029,7 +1210,7 @@
   function navigateChild() {
     if (!state.selectedElement) return;
     const children = Array.from(state.selectedElement.children).filter(
-      el => !el.classList.contains('elpicker-overlay') && !el.classList.contains('elpicker-rect')
+      el => !el.classList.contains('elpicker-overlay')
     );
     if (children.length > 0) {
       state.childIndex = 0;
@@ -1043,7 +1224,7 @@
     if (!parent) return;
     
     const siblings = Array.from(parent.children).filter(
-      el => !el.classList.contains('elpicker-overlay') && !el.classList.contains('elpicker-rect')
+      el => !el.classList.contains('elpicker-overlay')
     );
     const currentIndex = siblings.indexOf(state.selectedElement);
     if (currentIndex > 0) {
@@ -1057,7 +1238,7 @@
     if (!parent) return;
     
     const siblings = Array.from(parent.children).filter(
-      el => !el.classList.contains('elpicker-overlay') && !el.classList.contains('elpicker-rect')
+      el => !el.classList.contains('elpicker-overlay')
     );
     const currentIndex = siblings.indexOf(state.selectedElement);
     if (currentIndex < siblings.length - 1) {
@@ -1085,75 +1266,59 @@
 
   // ===== Event Handlers =====
 
+  function isPassthroughModifier(e) {
+    return isMac ? e.metaKey : e.ctrlKey;
+  }
+
   function onMouseMove(e) {
-    if (!state.isActive) return;
-    
-    if (state.isDragging && state.dragStart) {
-      updateRect(state.dragStart.x, state.dragStart.y, e.clientX, e.clientY);
-      
-      // Highlight potential selection
-      const best = findBestMatchInRect(
-        state.dragStart.x, state.dragStart.y,
-        e.clientX, e.clientY
-      );
-      highlightElement(best);
-    } else if (state.isSelecting) {
-      const el = document.elementFromPoint(e.clientX, e.clientY);
-      if (el && !el.closest('.elpicker-overlay') && !el.classList.contains('elpicker-rect')) {
-        highlightElement(el);
-      }
+    if (!state.isActive || !state.isSelecting) return;
+
+    const el = document.elementFromPoint(e.clientX, e.clientY);
+    if (el && !el.closest('.elpicker-overlay')) {
+      highlightElement(el);
     }
   }
 
   function onMouseDown(e) {
     if (!state.isActive || !state.isSelecting) return;
     if (e.target.closest('.elpicker-overlay')) return;
-    
+    if (isPassthroughModifier(e)) return;
+
     e.preventDefault();
     e.stopPropagation();
-    
-    state.isDragging = true;
-    state.dragStart = { x: e.clientX, y: e.clientY };
-    createRectElement();
+
+    const el = document.elementFromPoint(e.clientX, e.clientY);
+    if (el) {
+      selectElement(el);
+      state.isSelecting = false;
+      clearHighlight();
+    }
   }
 
   function onMouseUp(e) {
-    if (!state.isActive) return;
+    if (!state.isActive || !state.isSelecting) return;
     if (e.target.closest('.elpicker-overlay')) return;
-    
-    if (state.isDragging && state.dragStart) {
-      e.preventDefault();
-      e.stopPropagation();
-      
-      const dist = Math.sqrt(
-        Math.pow(e.clientX - state.dragStart.x, 2) +
-        Math.pow(e.clientY - state.dragStart.y, 2)
-      );
-      
-      if (dist < 5) {
-        // Click - select element under cursor
-        const el = document.elementFromPoint(e.clientX, e.clientY);
-        if (el && !el.classList.contains('elpicker-rect')) {
-          selectElement(el);
-          state.isSelecting = false;
-        }
-      } else {
-        // Drag - select best match in rectangle
-        const best = findBestMatchInRect(
-          state.dragStart.x, state.dragStart.y,
-          e.clientX, e.clientY
-        );
-        if (best) {
-          selectElement(best);
-          state.isSelecting = false;
-        }
-      }
-      
-      state.isDragging = false;
-      state.dragStart = null;
-      hideRect();
-      clearHighlight();
-    }
+    if (isPassthroughModifier(e)) return;
+
+    e.preventDefault();
+    e.stopPropagation();
+  }
+
+  function onClick(e) {
+    if (!state.isActive || !state.isSelecting) return;
+    if (e.target.closest('.elpicker-overlay')) return;
+    if (isPassthroughModifier(e)) return;
+
+    e.preventDefault();
+    e.stopPropagation();
+  }
+
+  function onPassthroughKeyChange(e) {
+    if (!state.isActive || !state.isSelecting) return;
+    const key = isMac ? 'Meta' : 'Control';
+    if (e.key !== key) return;
+    const held = e.type === 'keydown';
+    document.body.classList.toggle('elpicker-passthrough', held);
   }
 
   function onKeyDown(e) {
@@ -1165,46 +1330,49 @@
     switch (e.key) {
       case 'Escape':
         e.preventDefault();
-        if (state.isDragging) {
-          // Cancel current drag
-          state.isDragging = false;
-          state.dragStart = null;
-          hideRect();
-          clearHighlight();
-        } else if (state.selectedElement && !state.isSelecting) {
-          // Go back to selecting mode
+        if (state.selectedElement && !state.isSelecting) {
           clearSelection();
           removeOverlay();
           state.selectedElement = null;
           state.isSelecting = true;
+          const escMod = isMac ? '\u2318' : 'Ctrl';
+          showToast(`Click to pick. Hold ${escMod} to click through.`);
+          showTopBanner(`Click to pick. Hold ${escMod} to click through.`);
         } else {
-          // Exit picker entirely
           deactivate();
         }
         break;
         
       case 'ArrowUp':
+      case 'w':
+      case 'W':
         if (state.selectedElement) {
           e.preventDefault();
           navigateParent();
         }
         break;
-        
+
       case 'ArrowDown':
+      case 's':
+      case 'S':
         if (state.selectedElement) {
           e.preventDefault();
           navigateChild();
         }
         break;
-        
+
       case 'ArrowLeft':
+      case 'a':
+      case 'A':
         if (state.selectedElement) {
           e.preventDefault();
           navigateSiblingPrev();
         }
         break;
-        
+
       case 'ArrowRight':
+      case 'd':
+      case 'D':
         if (state.selectedElement) {
           e.preventDefault();
           navigateSiblingNext();
@@ -1223,7 +1391,7 @@
         if (state.selectedElement) {
           e.preventDefault();
           e.stopPropagation();
-          cycleFormat(-1);
+          cycleTab(-1);
         }
         break;
 
@@ -1231,7 +1399,7 @@
         if (state.selectedElement) {
           e.preventDefault();
           e.stopPropagation();
-          cycleFormat(1);
+          cycleTab(1);
         }
         break;
 
@@ -1249,51 +1417,50 @@
 
   function activate() {
     if (state.isActive) return;
-    
+
     state.isActive = true;
     state.isSelecting = true;
     document.body.classList.add('elpicker-active');
-    
+
     document.addEventListener('mousemove', onMouseMove, true);
     document.addEventListener('mousedown', onMouseDown, true);
     document.addEventListener('mouseup', onMouseUp, true);
+    document.addEventListener('click', onClick, true);
     document.addEventListener('keydown', onKeyDown, true);
-    
-    showToast('ElPicker activated! Click or drag to select.');
-    showTopBanner('ElPicker activated! Click or drag to select.');
+    document.addEventListener('keydown', onPassthroughKeyChange, true);
+    document.addEventListener('keyup', onPassthroughKeyChange, true);
+
+    const mod = isMac ? '\u2318' : 'Ctrl';
+    showToast(`ElPicker activated! Click to pick. Hold ${mod} to click through.`);
+    showTopBanner(`ElPicker activated! Click to pick. Hold ${mod} to click through.`);
   }
 
   function showTopBanner(message) {
-    const banner = document.createElement('div');
-    banner.className = 'elpicker-top-banner';
-    banner.textContent = message;
-    document.body.appendChild(banner);
+    const banner = makeEl('div.elpicker-top-banner', message);
     setTimeout(() => banner.remove(), 2000);
   }
 
   function deactivate() {
     state.isActive = false;
     state.isSelecting = false;
-    state.isDragging = false;
-    state.dragStart = null;
-    
+
     document.body.classList.remove('elpicker-active');
+    document.body.classList.remove('elpicker-passthrough');
     clearHighlight();
     clearSelection();
-    hideRect();
     removeOverlay();
-    
-    if (rectEl) {
-      rectEl.remove();
-      rectEl = null;
-    }
-    
+    if (tooltipEl) { tooltipEl.remove(); tooltipEl = null; }
+
     state.selectedElement = null;
-    
+    currentChain = [];
+
     document.removeEventListener('mousemove', onMouseMove, true);
     document.removeEventListener('mousedown', onMouseDown, true);
     document.removeEventListener('mouseup', onMouseUp, true);
+    document.removeEventListener('click', onClick, true);
     document.removeEventListener('keydown', onKeyDown, true);
+    document.removeEventListener('keydown', onPassthroughKeyChange, true);
+    document.removeEventListener('keyup', onPassthroughKeyChange, true);
   }
 
   // ===== Message Handling =====
@@ -1319,6 +1486,9 @@
       sendResponse({ success: true });
     } else if (request.action === 'behaviorConfigUpdated') {
       behaviorConfig = { ...behaviorConfig, ...request.config };
+      sendResponse({ success: true });
+    } else if (request.action === 'shortcutConfigUpdated') {
+      shortcutConfig = { ...shortcutConfig, ...request.config };
       sendResponse({ success: true });
     }
     return true;

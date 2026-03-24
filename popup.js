@@ -5,9 +5,19 @@
 
 // Default configuration
 const DEFAULT_CONFIG = {
-  preferredPatterns: ['^xx--', '^oo--', '^C--'],
+  preferredPatterns: ['^oo--', '^C--', '^xx--'],
   avoidedPatterns: ['^elpicker-'],
   avoidedIdPatterns: ['^radix-']
+};
+
+const IS_MAC = /mac/i.test(navigator.platform || navigator.userAgentData?.platform || '');
+
+const DEFAULT_SHORTCUT = {
+  key: 'e',
+  ctrl: !IS_MAC,
+  shift: true,
+  alt: false,
+  meta: IS_MAC
 };
 
 function renderMarkdown(md) {
@@ -92,6 +102,21 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Behavior elements
   const stayOpenToggle = document.getElementById('stayOpenToggle');
 
+  // Shortcut settings elements
+  const shortcutSettingsToggle = document.getElementById('shortcutSettingsToggle');
+  const shortcutSettingsPanel = document.getElementById('shortcutSettingsPanel');
+  const shortcutModifiers = document.getElementById('shortcutModifiers');
+  const modCtrl = document.getElementById('modCtrl');
+  const modShift = document.getElementById('modShift');
+  const modAlt = document.getElementById('modAlt');
+  const modMeta = document.getElementById('modMeta');
+  const shortcutKey = document.getElementById('shortcutKey');
+  const shortcutPreview = document.getElementById('shortcutPreview');
+  const shortcutWarning = document.getElementById('shortcutWarning');
+  const saveShortcutBtn = document.getElementById('saveShortcut');
+  const resetShortcutBtn = document.getElementById('resetShortcut');
+  const activateShortcutDisplay = document.getElementById('activateShortcutDisplay');
+
   // ===== Helper Functions =====
 
   function populateSettings(config) {
@@ -138,6 +163,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     status.textContent = message;
     status.classList.remove('success');
     status.classList.add('error');
+    setTimeout(() => {
+      status.textContent = '';
+      status.classList.remove('error');
+    }, 4000);
   }
 
   function showSuccess(message) {
@@ -183,10 +212,88 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   }
 
+  // ===== Shortcut Settings =====
+
+  function getShortcutFromUI() {
+    return {
+      key: shortcutKey.value,
+      ctrl: modCtrl.classList.contains('active'),
+      shift: modShift.classList.contains('active'),
+      alt: modAlt.classList.contains('active'),
+      meta: modMeta.classList.contains('active')
+    };
+  }
+
+  function populateShortcutUI(config) {
+    shortcutKey.value = config.key || 'e';
+    modCtrl.classList.toggle('active', !!config.ctrl);
+    modShift.classList.toggle('active', !!config.shift);
+    modAlt.classList.toggle('active', !!config.alt);
+    modMeta.classList.toggle('active', !!config.meta);
+
+    if (IS_MAC) {
+      modCtrl.textContent = 'Ctrl';
+      modAlt.textContent = 'Opt';
+      modMeta.textContent = 'Cmd';
+    } else {
+      modCtrl.textContent = 'Ctrl';
+      modAlt.textContent = 'Alt';
+      modMeta.textContent = 'Win';
+    }
+
+    updateShortcutPreview();
+  }
+
+  function shortcutToKbds(config) {
+    const parts = [];
+    if (config.ctrl) parts.push(IS_MAC ? 'Ctrl' : 'Ctrl');
+    if (config.meta) parts.push(IS_MAC ? 'Cmd' : 'Win');
+    if (config.alt) parts.push(IS_MAC ? 'Opt' : 'Alt');
+    if (config.shift) parts.push('Shift');
+    parts.push(config.key.toUpperCase());
+    return parts;
+  }
+
+  function updateShortcutPreview() {
+    const config = getShortcutFromUI();
+    const parts = shortcutToKbds(config);
+    const hasModifier = config.ctrl || config.shift || config.alt || config.meta;
+
+    shortcutPreview.innerHTML = parts
+      .map(p => `<kbd>${p}</kbd>`)
+      .join('<span class="shortcut-plus">+</span>');
+
+    shortcutWarning.classList.toggle('visible', !hasModifier);
+
+    if (activateShortcutDisplay) {
+      activateShortcutDisplay.innerHTML = parts
+        .map(p => `<kbd>${p}</kbd>`)
+        .join('');
+    }
+  }
+
+  async function loadShortcutSettings() {
+    try {
+      const result = await chrome.storage.sync.get('shortcutConfig');
+      const config = result.shortcutConfig || DEFAULT_SHORTCUT;
+      populateShortcutUI(config);
+    } catch (e) {
+      console.log('ElPicker: Could not load shortcut settings', e);
+      populateShortcutUI(DEFAULT_SHORTCUT);
+    }
+  }
+
+  // ===== Helpers for popup-as-window =====
+
+  async function findBrowserTab() {
+    const tabs = await chrome.tabs.query({ active: true });
+    return tabs.find(t => t.url?.startsWith('http')) || null;
+  }
+
   // ===== Initialization =====
 
   try {
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    const tab = await findBrowserTab();
     if (tab?.id) {
       const response = await chrome.tabs.sendMessage(tab.id, { action: 'getState' });
       updateUI(response?.active || false);
@@ -198,32 +305,21 @@ document.addEventListener('DOMContentLoaded', async () => {
   await loadSettings();
   await loadEditorSettings();
   await loadBehaviorSettings();
+  await loadShortcutSettings();
 
   // ===== Event Listeners =====
 
   activateBtn.addEventListener('click', async () => {
     try {
-      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      const tab = await findBrowserTab();
 
       if (!tab?.id) {
         showError('No active tab found');
         return;
       }
 
-      if (tab.url?.startsWith('chrome://') ||
-          tab.url?.startsWith('chrome-extension://') ||
-          tab.url?.startsWith('edge://') ||
-          tab.url?.startsWith('about:')) {
-        showError('Cannot run on browser pages');
-        return;
-      }
-
       const response = await chrome.tabs.sendMessage(tab.id, { action: 'activate' });
       updateUI(response?.active || false);
-
-      if (response?.active) {
-        setTimeout(() => window.close(), 300);
-      }
     } catch (error) {
       showError('Refresh the page and try again');
     }
@@ -251,7 +347,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     showSuccess('Settings saved!');
 
     try {
-      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      const tab = await findBrowserTab();
       if (tab?.id) {
         await chrome.tabs.sendMessage(tab.id, { action: 'configUpdated', config });
       }
@@ -266,7 +362,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     showSuccess('Settings reset to defaults');
 
     try {
-      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      const tab = await findBrowserTab();
       if (tab?.id) {
         await chrome.tabs.sendMessage(tab.id, { action: 'configUpdated', config: DEFAULT_CONFIG });
       }
@@ -292,7 +388,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     showSuccess('Editor settings saved!');
 
     try {
-      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      const tab = await findBrowserTab();
       if (tab?.id) {
         await chrome.tabs.sendMessage(tab.id, { action: 'editorConfigUpdated', config });
       }
@@ -306,7 +402,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       const config = { stayOpen: stayOpenToggle.checked };
       await chrome.storage.sync.set({ behaviorConfig: config });
       try {
-        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+        const tab = await findBrowserTab();
         if (tab?.id) {
           await chrome.tabs.sendMessage(tab.id, { action: 'behaviorConfigUpdated', config });
         }
@@ -315,6 +411,57 @@ document.addEventListener('DOMContentLoaded', async () => {
       }
     });
   }
+
+  // Shortcut settings events
+  shortcutSettingsToggle.addEventListener('click', () => {
+    shortcutSettingsToggle.classList.toggle('open');
+    shortcutSettingsPanel.classList.toggle('open');
+  });
+
+  shortcutModifiers.addEventListener('click', (e) => {
+    const btn = e.target.closest('.shortcut-mod-btn');
+    if (!btn) return;
+    btn.classList.toggle('active');
+    updateShortcutPreview();
+  });
+
+  shortcutKey.addEventListener('change', updateShortcutPreview);
+
+  saveShortcutBtn.addEventListener('click', async () => {
+    const config = getShortcutFromUI();
+    const hasModifier = config.ctrl || config.shift || config.alt || config.meta;
+    if (!hasModifier) {
+      showError('Pick at least one modifier key');
+      return;
+    }
+
+    await chrome.storage.sync.set({ shortcutConfig: config });
+    showSuccess('Shortcut saved!');
+
+    try {
+      const tab = await findBrowserTab();
+      if (tab?.id) {
+        await chrome.tabs.sendMessage(tab.id, { action: 'shortcutConfigUpdated', config });
+      }
+    } catch (e) {
+      // Tab might not have content script loaded
+    }
+  });
+
+  resetShortcutBtn.addEventListener('click', async () => {
+    await chrome.storage.sync.set({ shortcutConfig: DEFAULT_SHORTCUT });
+    populateShortcutUI(DEFAULT_SHORTCUT);
+    showSuccess('Shortcut reset to default');
+
+    try {
+      const tab = await findBrowserTab();
+      if (tab?.id) {
+        await chrome.tabs.sendMessage(tab.id, { action: 'shortcutConfigUpdated', config: DEFAULT_SHORTCUT });
+      }
+    } catch (e) {
+      // Tab might not have content script loaded
+    }
+  });
 
   // Guide section
   const guideToggle = document.getElementById('guideToggle');
