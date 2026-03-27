@@ -1686,3 +1686,187 @@ _**Agent (claude-4.5-opus-high-thinking)**_
 <summary>Tool use: **read_file_v2**</summary>
 
 </details></tool-use>
+
+_**Agent (claude-4.5-opus-high-thinking)**_
+
+<think><details><summary>Thought Process</summary>
+I'll add a cached icon URL right after the overlayEl declaration.</details></think>
+
+_**Agent (claude-4.5-opus-high-thinking)**_
+
+<tool-use data-tool-type="write" data-tool-name="edit_file_v2">
+
+<details><summary>Tool use: **edit_file_v2** • Edit file: /Users/ken/git/vb/el-picker/content.js</summary>
+
+</details>
+
+</tool-use>
+
+<tool-use data-tool-type="write" data-tool-name="edit_file_v2"><details>
+<summary>Tool use: **edit_file_v2**</summary>
+
+</details></tool-use>
+
+_**Agent (claude-4.5-opus-high-thinking)**_
+
+<think><details><summary>Thought Process</summary>
+Now I need to update the createOverlay function to use the cached iconUrl instead of calling chrome.runtime.getURL inline.</details></think>
+
+_**Agent (claude-4.5-opus-high-thinking)**_
+
+Now update `createOverlay` to use the cached URL:
+
+_**Agent (claude-4.5-opus-high-thinking)**_
+
+<tool-use data-tool-type="write" data-tool-name="edit_file_v2">
+
+<details><summary>Tool use: **edit_file_v2** • Edit file: /Users/ken/git/vb/el-picker/content.js</summary>
+
+</details>
+
+</tool-use>
+
+<tool-use data-tool-type="write" data-tool-name="edit_file_v2"><details>
+<summary>Tool use: **edit_file_v2**</summary>
+
+</details></tool-use>
+
+_**Agent (claude-4.5-opus-high-thinking)**_
+
+<think><details><summary>Thought Process</summary>
+Now, for extra robustness, I should also wrap the `createOverlay` call and the whole try block in a check to make sure the extension context is still valid. But the simplest fix for now is what I did - cache the URL at load time. This should work.
+
+Actually, there could still be other chrome.* API calls that could fail. Let me think... the main one that gets called frequently is chrome.runtime.getURL. The other calls like chrome.storage.sync.get are async and happen at load time.
+
+Actually, we should also check if the runtime is still valid before trying to show the overlay. But for now, caching the icon URL should fix this specific error.</details></think>
+
+_**Agent (claude-4.5-opus-high-thinking)**_
+
+The icon URL is now cached at script load time, so it will work even after the extension context is invalidated. The template also gracefully omits the icon if the URL couldn't be fetched.
+
+---
+
+_**User**_
+
+When we copy by Cmd-C or Ctl-C, we don't want the full selector, but instead something we can paste into a find-in-all-files input in an IDE and get a hit.
+Thus:
+Avoid: ".xx--button"
+Prefer: "xx--button"
+Since we are doing a string match, not a css lookup.
+
+---
+
+_**Agent (claude-4.5-opus-high-thinking)**_
+
+<think><details><summary>Thought Process</summary>
+The user wants the copy (Cmd-C/Ctrl-C) action to produce a string suitable for "find in files" in an IDE, not a CSS selector. So instead of `.xx--button` they want just `xx--button` - no leading dot, since they're searching for the class name as a string in code.
+
+Let me look at how `copyContext` works and what it copies.</details></think>
+
+_**Agent (claude-4.5-opus-high-thinking)**_
+
+<tool-use data-tool-type="unknown" data-tool-name="ripgrep_raw_search">
+<details>
+<summary>Tool use: **ripgrep_raw_search**</summary>
+
+
+Parameters:
+
+```json
+{
+  "caseInsensitive": false,
+  "contextAfter": 5,
+  "path": "/Users/ken/git/vb/el-picker/content.js",
+  "pattern": "function copyContext|getElementContext"
+}
+```
+Additional data:
+
+```json
+{
+  "isPruned": true,
+  "outputMode": "content",
+  "path": "/Users/ken/git/vb/el-picker/content.js",
+  "pattern": "function copyContext|getElementContext",
+  "topFiles": [
+    {
+      "matchCount": 26,
+      "uri": "content.js"
+    }
+  ],
+  "totalFiles": 1,
+  "totalMatches": 5
+}
+```
+Status: **completed**
+
+
+</details>
+</tool-use>
+
+<tool-use data-tool-type="unknown" data-tool-name="ripgrep_raw_search"><details>
+<summary>Tool use: **ripgrep_raw_search**</summary>
+
+</details></tool-use>
+
+_**Agent (claude-4.5-opus-high-thinking)**_
+
+<think><details><summary>Thought Process</summary>
+So `copyContext` uses `getElementContext`, which for the "smart" tab returns `getShortCssSelector(element)`. The issue is that CSS selectors use `.` prefix for classes, but when searching in an IDE, you want just the class name.
+
+The user wants a "searchable" version for the main copy action (Cmd-C). I should create a separate function that returns a search-friendly string instead of a CSS selector.
+
+For "Smart" tab, this could be:
+- The best semantic class (without the dot), or
+- The element's most meaningful identifier
+
+Let me think about what makes sense:
+- If there's a semantic class like `xx--button`, return just `xx--button`
+- If there's an ID, maybe return just the ID (without #)?
+- If neither, maybe return the first meaningful class?
+
+Actually, looking at the current behavior and the user's example, they want to search for class names in their codebase. So the copy should give them the most useful search term.
+
+Let me create a `getSearchableContext` function that:
+1. For smart tab: returns the best semantic class (or best class) without CSS syntax
+2. For other tabs: could still use the full selector/xpath/html
+
+Actually wait, re-reading the user request - they specifically mention Cmd-C copy. So I should modify what gets copied via the main copy button, not change the tab display content.
+
+Let me modify `copyContext` to produce a search-friendly string when in smart mode.</details></think>
+
+_**Agent (claude-4.5-opus-high-thinking)**_
+
+I'll modify `copyContext` to produce an IDE-searchable string (no CSS syntax like `.` or `#`) when in Smart mode.
+
+_**Agent (claude-4.5-opus-high-thinking)**_
+
+<tool-use data-tool-type="write" data-tool-name="edit_file_v2">
+
+<details><summary>Tool use: **edit_file_v2** • Edit file: /Users/ken/git/vb/el-picker/content.js</summary>
+
+</details>
+
+</tool-use>
+
+<tool-use data-tool-type="write" data-tool-name="edit_file_v2"><details>
+<summary>Tool use: **edit_file_v2**</summary>
+
+</details></tool-use>
+
+_**Agent (claude-4.5-opus-high-thinking)**_
+
+<think><details><summary>Thought Process</summary>
+Now the Copy button (and Cmd-C) will:
+- In Smart mode: copy the best semantic class (like `xx--button`), or ID, or first meaningful class - no dots or hashes, suitable for find-in-files
+- In other tabs: copy the full selector/xpath/HTML as before</details></think>
+
+_**Agent (claude-4.5-opus-high-thinking)**_
+
+Now in Smart mode, the Copy button (Cmd-C/Ctrl-C) will copy:
+1. First semantic class (`xx--*` or `oo--*`) if present — just `xx--button`, not `.xx--button`
+2. Otherwise the ID (without `#`)
+3. Otherwise the first meaningful class
+4. Otherwise just the tag name
+
+This gives you a string you can paste directly into "Find in Files" and get hits on `className="xx--button"` or `class: 'xx--button'`.

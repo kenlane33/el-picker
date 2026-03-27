@@ -87,6 +87,17 @@
   background: #313244;
   border-bottom: 1px solid #45475a;
   border-radius: 8px 8px 0 0;
+  cursor: grab;
+  user-select: none;
+}
+
+.elpicker-header:active,
+.elpicker-dragging .elpicker-header {
+  cursor: grabbing;
+}
+
+.elpicker-dragging {
+  transition: none !important;
 }
 
 .elpicker-title {
@@ -536,7 +547,7 @@
   cursor: crosshair !important;
 }
 
-.elpicker-active * {
+.elpicker-active *:not(.elpicker-overlay):not(.elpicker-overlay *) {
   cursor: crosshair !important;
 }
 
@@ -544,7 +555,7 @@
   cursor: default !important;
 }
 
-.elpicker-active.elpicker-passthrough * {
+.elpicker-active.elpicker-passthrough *:not(.elpicker-overlay):not(.elpicker-overlay *) {
   cursor: default !important;
 }
 

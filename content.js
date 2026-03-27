@@ -24,6 +24,15 @@
   // DOM references
   let overlayEl = null;
 
+  // Panel drag state
+  let panelDragState = {
+    isDragging: false,
+    startX: 0,
+    startY: 0,
+    startLeft: 0,
+    startTop: 0
+  };
+
   // Cache icon URL at load time (before extension context could be invalidated)
   let iconUrl = '';
   try { iconUrl = chrome.runtime.getURL('icons/icon128.png'); } catch (e) { /* ignore */ }
@@ -79,7 +88,7 @@
   // Selector preference configuration (mutable, loaded from storage)
   let selectorConfig = {
     avoidIdPatterns: [/^radix-/],
-    preferClassPatterns: [/^xx--/, /^oo--/],
+    preferClassPatterns: [/^C--/, /^oo--/, /^xx--/],
     avoidClassPatterns: [/^elpicker-/]
   };
 
@@ -1098,6 +1107,40 @@
         else if (dir === 'right') navigateSiblingNext();
       });
     });
+
+    // Panel drag on header
+    const header = qs(overlayEl, '.elpicker-header');
+    header.addEventListener('mousedown', onPanelDragStart);
+  }
+
+  function onPanelDragStart(e) {
+    if (e.target.closest('.elpicker-close') || e.target.closest('.elpicker-nav-arrow')) return;
+    e.preventDefault();
+    panelDragState.isDragging = true;
+    panelDragState.startX = e.clientX;
+    panelDragState.startY = e.clientY;
+    panelDragState.startLeft = overlayEl.offsetLeft;
+    panelDragState.startTop = overlayEl.offsetTop;
+    overlayEl.classList.add('elpicker-dragging');
+    document.addEventListener('mousemove', onPanelDragMove);
+    document.addEventListener('mouseup', onPanelDragEnd);
+  }
+
+  function onPanelDragMove(e) {
+    if (!panelDragState.isDragging) return;
+    const dx = e.clientX - panelDragState.startX;
+    const dy = e.clientY - panelDragState.startY;
+    const newLeft = panelDragState.startLeft + dx;
+    const newTop = panelDragState.startTop + dy;
+    overlayEl.style.left = `${newLeft}px`;
+    overlayEl.style.top = `${newTop}px`;
+  }
+
+  function onPanelDragEnd() {
+    panelDragState.isDragging = false;
+    if (overlayEl) overlayEl.classList.remove('elpicker-dragging');
+    document.removeEventListener('mousemove', onPanelDragMove);
+    document.removeEventListener('mouseup', onPanelDragEnd);
   }
 
   function escapeHtml(text) {
@@ -1108,6 +1151,11 @@
 
   function removeOverlay() {
     hideElTooltip();
+    if (panelDragState.isDragging) {
+      document.removeEventListener('mousemove', onPanelDragMove);
+      document.removeEventListener('mouseup', onPanelDragEnd);
+      panelDragState.isDragging = false;
+    }
     if (overlayEl) {
       overlayEl.remove();
       overlayEl = null;
@@ -1248,11 +1296,21 @@
 
   // ===== Actions =====
 
+  function getSearchableContext(element) {
+    const { semantic, all } = classifyClasses(element);
+    if (semantic.length > 0) return semantic[0];
+    if (element.id && isIdAllowed(element.id)) return element.id;
+    if (all.length > 0) return all[0];
+    return element.tagName.toLowerCase();
+  }
+
   function copyContext() {
     if (!state.selectedElement) return;
-    const context = getElementContext(state.selectedElement);
+    const context = state.activeTab === 'smart'
+      ? getSearchableContext(state.selectedElement)
+      : getElementContext(state.selectedElement);
     navigator.clipboard.writeText(context).then(() => {
-      showToast('Copied to clipboard!');
+      showToast(`Copied: ${context}`);
       closeAfterAction();
     });
   }
